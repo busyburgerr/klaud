@@ -1,0 +1,41 @@
+{
+  "name": "figma-make-app",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0",
+    "build": "vite build",
+    "preview": "vite preview",
+    "format": "oxfmt",
+    "api": "node --experimental-sqlite --env-file-if-exists=.env server/index.js",
+    "api:dev": "node --experimental-sqlite --env-file-if-exists=.env --watch server/index.js",
+    "api:seed": "node --experimental-sqlite server/db/seed.js",
+    "api:test": "node --experimental-sqlite --test server/test/*.test.js",
+    "start": "node --experimental-sqlite --env-file-if-exists=.env server/start.js",
+    "typecheck": "tsc --noEmit",
+    "api:reset": "node --experimental-sqlite server/db/seed.js --clean"
+  },
+  "dependencies": {
+    "bcryptjs": "^3.0.3",
+    "cookie-parser": "^1.4.7",
+    "cors": "^2.8.6",
+    "express": "^5.2.1",
+    "jsonwebtoken": "^9.0.3",
+    "multer": "^2.2.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "react-router": "^8.3.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.0.0",
+    "@types/node": "^22.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^6.0.0",
+    "oxfmt": "^0.2.0",
+    "tailwindcss": "^4.0.0",
+    "typescript": "^5.7.0",
+    "vite": "^8.0.0"
+  }
+}

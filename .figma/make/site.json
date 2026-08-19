@@ -1,0 +1,10 @@
+{
+  "description": "This marketplace web application connects buyers and sellers in a user-friendly platform, offering a seamless shopping experience with a modern flat design.",
+  "robots": {
+    "index": false
+  },
+  "accessibility": {
+    "addBypassLinks": false,
+    "ignoreReducedMotion": false
+  }
+}
