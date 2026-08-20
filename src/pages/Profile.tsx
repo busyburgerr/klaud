@@ -1,12 +1,13 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router";
-import api, { ApiError, type Listing, type Profile as ProfileUser } from "../api";
+import api, { ApiError, type Listing, type PendingReview, type Profile as ProfileUser } from "../api";
 import { useAuth } from "../auth";
 import { useAsync } from "../hooks";
 import { EmptyState, FieldError, LotGrid, Rule } from "../components";
+import { ReviewList, ReviewSummaryCard, Stars } from "../Reviews";
 import { useWish } from "../store";
 
-const TABS = ["Обзор", "Мои объявления", "Избранное", "Настройки"] as const;
+const TABS = ["Обзор", "Мои объявления", "Избранное", "Отзывы", "Настройки"] as const;
 type Tab = (typeof TABS)[number];
 
 export default function Profile() {
@@ -17,6 +18,7 @@ export default function Profile() {
   const { data: stats, reload: reloadStats } = useAsync(() => api.profileStats(), []);
   const { data: mine, loading: mineLoading, reload: reloadMine } = useAsync(() => api.myListings({ limit: 48 }), []);
   const { data: saved, loading: savedLoading } = useAsync(() => api.favorites(), [tab === "Избранное"]);
+  const { data: pending, reload: reloadPending } = useAsync(() => api.pendingReviews(), []);
 
   if (!user) return null;
 
@@ -62,6 +64,7 @@ export default function Profile() {
         {TABS.map((t) => (
           <button key={t} onClick={() => setTab(t)} className="mono-label" style={{ background: "none", border: "none", cursor: "pointer", color: tab === t ? "#1f2320" : "#1f232099", padding: "16px 0", borderBottom: "2px solid " + (tab === t ? "#1f2320" : "transparent"), whiteSpace: "nowrap", marginBottom: -1 }}>
             {t}{t === "Избранное" && stats?.saved ? ` · ${stats.saved}` : ""}
+            {t === "Отзывы" && pending?.length ? ` · ${pending.length}` : ""}
           </button>
         ))}
       </div>
@@ -77,6 +80,18 @@ export default function Profile() {
               </div>
             ))}
           </div>
+
+          {(pending?.length ?? 0) > 0 && (
+            <div className="mb-8" style={{ border: "1px solid #1f232022", borderRadius: 16, background: "#f6f0e3", padding: "18px 20px" }}>
+              <span className="mono-label" style={{ color: "#1f232099" }}>Оцените сделки</span>
+              <p className="m-0 mt-2" style={{ fontSize: 15, lineHeight: 1.5 }}>
+                По {pending!.length} {pending!.length === 1 ? "покупке" : "покупкам"} можно оставить отзыв продавцу.
+              </p>
+              <button onClick={() => setTab("Отзывы")} className="mono-label mt-3" style={{ background: "#1f2320", color: "#efe8da", border: "none", borderRadius: 999, padding: "12px 24px", cursor: "pointer" }}>
+                Оставить отзыв
+              </button>
+            </div>
+          )}
 
           {(stats?.listings.pending ?? 0) > 0 && (
             <p className="mono-label mb-8" style={{ color: "#1f232099", background: "#f6f0e3", border: "1px solid #1f232022", borderRadius: 12, padding: "14px 16px" }}>
@@ -119,8 +134,144 @@ export default function Profile() {
         </div>
       )}
 
+      {/* ── REVIEWS ── */}
+      {tab === "Отзывы" && (
+        <ReviewsTab
+          userSlug={user.id}
+          pending={pending ?? []}
+          onChange={() => { reloadPending(); reloadStats(); }}
+        />
+      )}
+
       {/* ── SETTINGS ── */}
       {tab === "Настройки" && <Settings user={user} />}
+    </div>
+  );
+}
+
+/**
+ * Вкладка «Отзывы»: что можно оценить после покупки и что написали о вас.
+ */
+function ReviewsTab({
+  userSlug,
+  pending,
+  onChange,
+}: {
+  userSlug: string;
+  pending: PendingReview[];
+  onChange: () => void;
+}) {
+  const { data: mine, reload } = useAsync(() => api.userReviews(userSlug), []);
+  const [form, setForm] = useState<PendingReview | null>(null);
+
+  return (
+    <div className="py-8 flex flex-col gap-10">
+      {/* Сделки, ждущие оценки */}
+      {pending.length > 0 && (
+        <div>
+          <h2 className="mono-label mb-4" style={{ color: "#1f232099" }}>Оцените покупки</h2>
+          <div className="flex flex-col" style={{ border: "1px solid #1f232022", borderRadius: 16, overflow: "hidden" }}>
+            {pending.map((p, i) => (
+              <div key={p.listingId} className="flex items-center gap-4 p-4" style={{ background: "#f6f0e3", borderTop: i ? "1px solid #1f232022" : "none" }}>
+                <Link to={`/lot/${p.listingId}`} className="overflow-hidden" style={{ width: 56, height: 70, borderRadius: 10, background: "#e1d9c8", flexShrink: 0 }}>
+                  {p.img && <img src={p.img} alt={p.title} style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />}
+                </Link>
+                <div className="flex-1 min-w-0">
+                  <Link to={`/lot/${p.listingId}`} style={{ fontSize: 15, fontWeight: 600, color: "#1f2320", textDecoration: "none" }} className="underline-link">{p.title}</Link>
+                  <p className="mono-label m-0 mt-1" style={{ color: "#1f232099" }}>
+                    Лот {p.lot} · продавец <Link to={`/seller/${p.seller.id}`} style={{ color: "#1f2320" }} className="underline-link">{p.seller.name}</Link>
+                  </p>
+                </div>
+                <button onClick={() => setForm(p)} className="mono-label flex-shrink-0" style={{ background: "#1f2320", color: "#efe8da", border: "none", borderRadius: 999, padding: "10px 20px", cursor: "pointer" }}>
+                  Оценить
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Отзывы обо мне */}
+      <div>
+        <h2 className="mono-label mb-4" style={{ color: "#1f232099" }}>Отзывы обо мне</h2>
+        {mine && mine.summary.total > 0 && (
+          <div className="mb-6"><ReviewSummaryCard summary={mine.summary} /></div>
+        )}
+        <ReviewList items={mine?.items ?? []} empty="О вас пока не оставили отзывов" />
+      </div>
+
+      {form && (
+        <ReviewForm
+          deal={form}
+          onClose={() => setForm(null)}
+          onDone={() => { setForm(null); reload(); onChange(); }}
+        />
+      )}
+    </div>
+  );
+}
+
+/** Форма отзыва: оценка, состоялась ли сделка и комментарий. */
+function ReviewForm({ deal, onClose, onDone }: { deal: PendingReview; onClose: () => void; onDone: () => void }) {
+  const [rating, setRating] = useState(5);
+  const [success, setSuccess] = useState(true);
+  const [text, setText] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  const submit = async () => {
+    setBusy(true);
+    setError("");
+    try {
+      await api.leaveReview({ listingId: deal.listingId, rating, dealSuccess: success, text });
+      onDone();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Не удалось отправить отзыв");
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center px-5" style={{ background: "#1f232099" }} onClick={onClose}>
+      <div className="w-full" style={{ maxWidth: 460, background: "#efe8da", borderRadius: 20, padding: 28 }} onClick={(e) => e.stopPropagation()}>
+        <span className="mono-label" style={{ color: "#1f232099" }}>Лот {deal.lot} · {deal.seller.name}</span>
+        <h3 className="font-display mt-2 mb-4" style={{ fontSize: 26, fontWeight: 800, letterSpacing: "-0.02em" }}>Как прошла сделка?</h3>
+
+        {error && <p className="mono-label mb-4" style={{ color: "#a33" }}>{error}</p>}
+
+        <div className="flex items-center gap-2 mb-5">
+          {[1, 2, 3, 4, 5].map((n) => (
+            <button key={n} type="button" onClick={() => setRating(n)} aria-label={`Оценка ${n}`} style={{ background: "none", border: "none", cursor: "pointer", padding: 0, fontSize: 30, lineHeight: 1, color: n <= rating ? "#1f2320" : "#1f232033" }}>
+              ★
+            </button>
+          ))}
+          <span className="mono-label ml-2" style={{ color: "#1f232099" }}>{rating} из 5</span>
+        </div>
+
+        <div className="flex gap-2 mb-5">
+          {[true, false].map((v) => (
+            <button key={String(v)} type="button" onClick={() => setSuccess(v)} className="mono-label" style={{ flex: 1, background: success === v ? "#1f2320" : "transparent", color: success === v ? "#efe8da" : "#1f2320", border: "1px solid " + (success === v ? "#1f2320" : "#1f232033"), borderRadius: 999, padding: "11px 16px", cursor: "pointer" }}>
+              {v ? "Сделка состоялась" : "Сделка не состоялась"}
+            </button>
+          ))}
+        </div>
+
+        <textarea
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          rows={4}
+          maxLength={1000}
+          placeholder="Расскажите, как прошла сделка: связь, состояние вещи, доставка"
+          style={{ border: "1px solid #1f232033", borderRadius: 14, background: "#f6f0e3", padding: "14px 16px", fontSize: 15, outline: "none", width: "100%", resize: "vertical", lineHeight: 1.5 }}
+        />
+
+        <div className="flex gap-3 mt-5 justify-end">
+          <button onClick={onClose} className="mono-label" style={{ background: "transparent", border: "1px solid #1f232033", borderRadius: 999, padding: "12px 22px", cursor: "pointer", color: "#1f2320" }}>Отмена</button>
+          <button onClick={submit} disabled={busy} className="mono-label" style={{ background: "#1f2320", color: "#efe8da", border: "none", borderRadius: 999, padding: "12px 22px", cursor: "pointer", opacity: busy ? 0.6 : 1 }}>
+            {busy ? "Отправляем…" : "Отправить отзыв"}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -128,6 +279,7 @@ export default function Profile() {
 /** Вкладка «Мои объявления»: публикация, снятие и удаление лота. */
 function MyListings({ items, loading, onChange }: { items: Listing[]; loading: boolean; onChange: () => void }) {
   const [busyId, setBusyId] = useState<number | null>(null);
+  const [selling, setSelling] = useState<Listing | null>(null);
   const { sync } = useWish();
 
   const act = async (id: number, run: () => Promise<unknown>) => {
@@ -177,7 +329,10 @@ function MyListings({ items, loading, onChange }: { items: Listing[]; loading: b
               </div>
               <div className="flex gap-2 flex-shrink-0 flex-wrap justify-end">
                 {l.status === "active" && (
-                  <button disabled={busyId === l.id} onClick={() => act(l.id, () => api.updateListing(l.id, { status: "archived" }))} className="mono-label" style={smallBtn(false)}>Снять</button>
+                  <>
+                    <button disabled={busyId === l.id} onClick={() => setSelling(l)} className="mono-label" style={smallBtn(true)}>Продан</button>
+                    <button disabled={busyId === l.id} onClick={() => act(l.id, () => api.updateListing(l.id, { status: "archived" }))} className="mono-label" style={smallBtn(false)}>Снять</button>
+                  </>
                 )}
                 {(l.status === "rejected" || l.status === "archived") && (
                   <button disabled={busyId === l.id} onClick={() => act(l.id, () => api.resubmitListing(l.id))} className="mono-label" style={smallBtn(true)}>
@@ -197,6 +352,81 @@ function MyListings({ items, loading, onChange }: { items: Listing[]; loading: b
           ))}
         </div>
       )}
+
+      {selling && (
+        <SellDialog
+          listing={selling}
+          onClose={() => setSelling(null)}
+          onDone={() => { setSelling(null); onChange(); }}
+        />
+      )}
+    </div>
+  );
+}
+
+/**
+ * Отметка лота проданным. Покупателя выбираем из тех, кто писал по лоту —
+ * без этого он не сможет оставить отзыв о сделке.
+ */
+function SellDialog({ listing, onClose, onDone }: { listing: Listing; onClose: () => void; onDone: () => void }) {
+  const { data: buyers, loading } = useAsync(() => api.listingBuyers(listing.id), [listing.id]);
+  const [buyerId, setBuyerId] = useState<number | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  const submit = async () => {
+    setBusy(true);
+    setError("");
+    try {
+      await api.sellListing(listing.id, buyerId ?? undefined);
+      onDone();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Не удалось отметить лот проданным");
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center px-5" style={{ background: "#1f232099" }} onClick={onClose}>
+      <div className="w-full" style={{ maxWidth: 460, background: "#efe8da", borderRadius: 20, padding: 28 }} onClick={(e) => e.stopPropagation()}>
+        <span className="mono-label" style={{ color: "#1f232099" }}>Лот {listing.lot}</span>
+        <h3 className="font-display mt-2 mb-4" style={{ fontSize: 26, fontWeight: 800, letterSpacing: "-0.02em" }}>Кому продали?</h3>
+        <p className="mb-4" style={{ fontSize: 14, lineHeight: 1.5, color: "#1f2320cc" }}>
+          Укажите покупателя — он сможет оставить отзыв о сделке, и это повлияет на ваш рейтинг.
+        </p>
+
+        {error && <p className="mono-label mb-4" style={{ color: "#a33" }}>{error}</p>}
+
+        {loading ? (
+          <p className="mono-label" style={{ color: "#1f232099" }}>Загрузка…</p>
+        ) : !buyers?.length ? (
+          <p className="mono-label mb-4" style={{ color: "#1f232099" }}>
+            По этому лоту никто не писал — отметим продажу без покупателя.
+          </p>
+        ) : (
+          <div className="flex flex-col gap-2 mb-4">
+            {buyers.map((b) => (
+              <label key={b.userId} className="flex items-center gap-3 cursor-pointer" style={{ fontSize: 15 }}>
+                <span style={{ width: 18, height: 18, borderRadius: "50%", border: "1px solid #1f2320", background: buyerId === b.userId ? "#1f2320" : "transparent", flexShrink: 0 }} />
+                <input type="radio" name="buyer" checked={buyerId === b.userId} onChange={() => setBuyerId(b.userId)} style={{ display: "none" }} />
+                {b.name}
+              </label>
+            ))}
+            <label className="flex items-center gap-3 cursor-pointer" style={{ fontSize: 15, color: "#1f232099" }}>
+              <span style={{ width: 18, height: 18, borderRadius: "50%", border: "1px solid #1f2320", background: buyerId === null ? "#1f2320" : "transparent", flexShrink: 0 }} />
+              <input type="radio" name="buyer" checked={buyerId === null} onChange={() => setBuyerId(null)} style={{ display: "none" }} />
+              Продал вне платформы
+            </label>
+          </div>
+        )}
+
+        <div className="flex gap-3 mt-5 justify-end">
+          <button onClick={onClose} className="mono-label" style={{ background: "transparent", border: "1px solid #1f232033", borderRadius: 999, padding: "12px 22px", cursor: "pointer", color: "#1f2320" }}>Отмена</button>
+          <button onClick={submit} disabled={busy} className="mono-label" style={{ background: "#1f2320", color: "#efe8da", border: "none", borderRadius: 999, padding: "12px 22px", cursor: "pointer", opacity: busy ? 0.6 : 1 }}>
+            {busy ? "Сохраняем…" : "Отметить проданным"}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -224,6 +454,7 @@ function Settings({ user }: { user: ProfileUser }) {
 
   const [name, setName] = useState(user.name);
   const [phone, setPhone] = useState(user.phoneRaw);
+  const [email, setEmail] = useState(user.email ?? "");
   const [city, setCity] = useState(user.city);
   const [bio, setBio] = useState(user.bio);
   const [notify, setNotify] = useState(user.notify);
@@ -251,7 +482,7 @@ function Settings({ user }: { user: ProfileUser }) {
     setFields({});
 
     try {
-      const updated = await api.updateProfile({ name, phone, city, bio, notify });
+      const updated = await api.updateProfile({ name, phone, city, bio, email, notify });
       setUser(updated);
       setSaved(true);
       setTimeout(() => setSaved(false), 2200);
@@ -286,6 +517,25 @@ function Settings({ user }: { user: ProfileUser }) {
           <span className="mono-label" style={label}>Номер телефона</span>
           <input value={phone} onChange={(e) => setPhone(e.target.value.replace(/[^\d]/g, "").slice(0, 11))} inputMode="tel" style={field} />
           <FieldError>{fields.phone}</FieldError>
+        </div>
+        <div>
+          <span className="mono-label" style={label}>Почта <span style={{ color: "#1f232066" }}>· для уведомлений и восстановления доступа</span></span>
+          <input
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            type="email"
+            inputMode="email"
+            autoComplete="email"
+            maxLength={160}
+            placeholder="name@example.com"
+            style={field}
+          />
+          <FieldError>{fields.email}</FieldError>
+          {user.email && (
+            <p className="mono-label m-0 mt-2" style={{ color: "#1f232099" }}>
+              {user.emailVerified ? "✓ почта подтверждена" : "почта пока не подтверждена"}
+            </p>
+          )}
         </div>
         <div>
           <span className="mono-label" style={label}>Город</span>

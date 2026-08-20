@@ -1,12 +1,15 @@
 import { useEffect, useState } from "react";
 import { Link, NavLink, Outlet, useLocation } from "react-router";
-import api, { moderation } from "./api";
+import api, { moderation, type City } from "./api";
 import { hasRole, useAuth } from "./auth";
+import { useCity } from "./city";
 import { useAsync } from "./hooks";
 import { Marquee, Rule } from "./components";
 
 export default function Layout() {
   const [mobileMenu, setMobileMenu] = useState(false);
+  const [cityOpen, setCityOpen] = useState(false);
+  const { city, cities, setCity } = useCity();
   const location = useLocation();
   const { user } = useAuth();
 
@@ -28,7 +31,7 @@ export default function Layout() {
   const queue = (modStats?.pending ?? 0) + (modStats?.openReports ?? 0);
 
   useEffect(() => { window.scrollTo(0, 0); }, [location.pathname]);
-  useEffect(() => { setMobileMenu(false); }, [location.pathname]);
+  useEffect(() => { setMobileMenu(false); setCityOpen(false); }, [location.pathname]);
 
   const cats = categories ?? [];
 
@@ -40,7 +43,7 @@ export default function Layout() {
         <div className="max-w-7xl mx-auto px-5 md:px-10">
           <div className="flex items-center justify-between py-3">
             <nav className="hidden md:flex items-center gap-7">
-              {[{ t: "Каталог", to: "/catalog" }, { t: "Для бизнеса", to: "/business" }, { t: "Журнал", to: "/journal" }, { t: "Помощь", to: "/catalog" }].map((l, i) => (
+              {[{ t: "Каталог", to: "/catalog" }, { t: "Для бизнеса", to: "/business" }, { t: "Журнал", to: "/journal" }, { t: "Помощь", to: "/help" }].map((l, i) => (
                 <NavLink key={i} to={l.to} className="mono-label underline-link" style={{ color: "#1f2320", textDecoration: "none" }}>{l.t}</NavLink>
               ))}
               {staff && (
@@ -49,9 +52,25 @@ export default function Layout() {
                 </NavLink>
               )}
             </nav>
-            <span className="mono-label hidden md:block" style={{ color: "#1f232099" }}>
-              {user?.city ?? "Москва"} · {new Date().toLocaleDateString("ru-RU", { day: "2-digit", month: "long", year: "numeric" })}
-            </span>
+            <div className="mono-label hidden md:flex items-center gap-2 relative" style={{ color: "#1f232099" }}>
+              <button
+                onClick={() => setCityOpen((v) => !v)}
+                className="mono-label flex items-center gap-1.5"
+                aria-expanded={cityOpen}
+                style={{ background: "none", border: "none", cursor: "pointer", color: "#1f2320", padding: 0 }}
+              >
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" aria-hidden>
+                  <path d="M12 21s7-6.3 7-11a7 7 0 1 0-14 0c0 4.7 7 11 7 11z" stroke="#1f2320" strokeWidth="1.7"/>
+                  <circle cx="12" cy="10" r="2.4" stroke="#1f2320" strokeWidth="1.7"/>
+                </svg>
+                {city ?? "Вся Россия"}
+                <svg width="9" height="9" viewBox="0 0 10 10" fill="none" aria-hidden><path d="M1 3l4 4 4-4" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"/></svg>
+              </button>
+              <span>·</span>
+              <span>{new Date().toLocaleDateString("ru-RU", { day: "2-digit", month: "long", year: "numeric" })}</span>
+
+              {cityOpen && <CityMenu city={city} cities={cities} onPick={(c) => { setCity(c); setCityOpen(false); }} onClose={() => setCityOpen(false)} />}
+            </div>
             <div className="flex items-center gap-5 ml-auto md:ml-0">
               {user ? (
                 <Link to="/account" className="mono-label underline-link hidden sm:inline" style={{ color: "#1f2320", textDecoration: "none" }}>
@@ -106,6 +125,18 @@ export default function Layout() {
       {mobileMenu && (
         <div className="md:hidden fixed inset-0 z-40 pt-28 px-6 overflow-auto" style={{ background: "#efe8da" }}>
           <div className="flex flex-col">
+            <div className="flex items-center justify-between py-4" style={{ borderBottom: "1px solid #1f232022" }}>
+              <span className="mono-label" style={{ color: "#1f232099" }}>Город</span>
+              <select
+                value={city ?? ""}
+                onChange={(e) => setCity(e.target.value || null)}
+                className="mono-label"
+                style={{ background: "#f6f0e3", border: "1px solid #1f232033", borderRadius: 10, padding: "8px 10px", color: "#1f2320" }}
+              >
+                <option value="">Вся Россия</option>
+                {cities.map((c) => <option key={c.slug} value={c.name}>{c.name}</option>)}
+              </select>
+            </div>
             {cats.map((c) => (
               <Link key={c.slug} to={`/category/${c.slug}`} className="flex items-center justify-between py-4 text-left" style={{ textDecoration: "none", color: "#1f2320", borderBottom: "1px solid #1f232022" }}>
                 <span className="font-display" style={{ fontSize: 22 }}>{c.label}</span>
@@ -159,7 +190,7 @@ export default function Layout() {
             {[
               { title: "Покупателям", links: [{ t: "Как купить лот", to: "/journal/garantiynaya-sdelka" }, { t: "Доставка", to: "/journal" }, { t: "Возврат", to: "/journal" }, { t: "Безопасная сделка", to: "/journal/garantiynaya-sdelka" }] },
               { title: "Продавцам", links: [{ t: "Разместить лот", to: "/new" }, { t: "Тарифы", to: "/business" }, { t: "Продвижение", to: "/business" }] },
-              { title: "Компания", links: [{ t: "О проекте", to: "/business" }, { t: "Журнал", to: "/journal" }, { t: "Карьера", to: "/business" }, { t: "Помощь", to: "/catalog" }] },
+              { title: "Компания", links: [{ t: "О проекте", to: "/about" }, { t: "Журнал", to: "/journal" }, { t: "Карьера", to: "/business" }, { t: "Помощь", to: "/help" }] },
             ].map((col) => (
               <div key={col.title} className="md:col-span-2">
                 <h4 className="mono-label m-0 mb-4" style={{ color: "#efe8da99" }}>{col.title}</h4>
@@ -184,3 +215,64 @@ export default function Layout() {
     </div>
   );
 }
+
+/** Выпадающий список городов с поиском. */
+function CityMenu({
+  city,
+  cities,
+  onPick,
+  onClose,
+}: {
+  city: string | null;
+  cities: City[];
+  onPick: (city: string | null) => void;
+  onClose: () => void;
+}) {
+  const [q, setQ] = useState("");
+  const found = cities.filter((c) => c.name.toLowerCase().includes(q.trim().toLowerCase()));
+
+  return (
+    <>
+      {/* Клик мимо списка закрывает его. */}
+      <div className="fixed inset-0" style={{ zIndex: 40 }} onClick={onClose} />
+      <div
+        className="absolute"
+        style={{ top: "calc(100% + 10px)", left: 0, width: 280, background: "#efe8da", border: "1px solid #1f232022", borderRadius: 16, boxShadow: "0 18px 40px #1f232022", zIndex: 50, overflow: "hidden" }}
+      >
+        <div className="p-3" style={{ borderBottom: "1px solid #1f232022" }}>
+          <input
+            autoFocus
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="Найти город"
+            className="w-full outline-none mono-label"
+            style={{ background: "#f6f0e3", border: "1px solid #1f232033", borderRadius: 10, padding: "10px 12px", color: "#1f2320" }}
+          />
+        </div>
+        <div style={{ maxHeight: 320, overflowY: "auto" }}>
+          <button onClick={() => onPick(null)} className="mono-label w-full text-left px-4 py-3" style={rowStyle(city === null)}>
+            Вся Россия
+          </button>
+          {found.map((c) => (
+            <button key={c.slug} onClick={() => onPick(c.name)} className="mono-label w-full text-left px-4 py-3 flex items-center justify-between gap-3" style={rowStyle(city === c.name)}>
+              <span>{c.name}</span>
+              {c.listingCount > 0 && <span style={{ color: "#1f232066" }}>{c.listingCount}</span>}
+            </button>
+          ))}
+          {found.length === 0 && (
+            <p className="mono-label px-4 py-4 m-0" style={{ color: "#1f232099" }}>Город не найден</p>
+          )}
+        </div>
+      </div>
+    </>
+  );
+}
+
+const rowStyle = (active: boolean) =>
+  ({
+    background: active ? "#1f2320" : "transparent",
+    color: active ? "#efe8da" : "#1f2320",
+    border: "none",
+    borderBottom: "1px solid #1f232014",
+    cursor: "pointer",
+  }) as const;

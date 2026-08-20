@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router";
 import api from "../api";
+import { useCity } from "../city";
 import { useAsync, useDebounced } from "../hooks";
 import { ErrorState, LotGrid, Rule } from "../components";
 
@@ -27,20 +28,24 @@ export default function Catalog() {
 
   const [cols, setCols] = useState(4);
 
+  // Город из шапки — общий фильтр витрины; на странице его можно снять.
+  const { city } = useCity();
+  const cityFilter = params.get("city") === "all" ? undefined : city ?? undefined;
+
   const { data: categories } = useAsync(() => api.categories(), []);
   const { data: filters } = useAsync(() => api.filters(), []);
   const category = categories?.find((c) => c.slug === slug) ?? null;
 
   const { data, loading, error, reload } = useAsync(
-    () => api.listings({ cat: slug, q, cond: conds, minPrice, maxPrice, sort, page, limit: 24 }),
-    [slug, q, conds.join(","), minPrice, maxPrice, sort, page],
+    () => api.listings({ cat: slug, q, cond: conds, minPrice, maxPrice, sort, page, limit: 24, location: cityFilter }),
+    [slug, q, conds.join(","), minPrice, maxPrice, sort, page, cityFilter],
   );
 
   // При смене фильтров возвращаемся на первую страницу.
   useEffect(() => {
     if (page > 1) patch({ page: null });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [slug, q, conds.join(","), minPrice, maxPrice, sort]);
+  }, [slug, q, conds.join(","), minPrice, maxPrice, sort, cityFilter]);
 
   /** Точечно правит query-строку, сохраняя остальные параметры. */
   function patch(changes: Record<string, string | string[] | null>) {
@@ -64,7 +69,11 @@ export default function Catalog() {
 
   const hasFilters = conds.length > 0 || minP !== "" || maxP !== "";
   const items = data?.items ?? [];
-  const gridCls = cols === 2 ? "grid-cols-1 sm:grid-cols-2" : "grid-cols-2 md:grid-cols-3 lg:grid-cols-4";
+  // Контейнер ограничен по ширине, поэтому четвёртая колонка на широком
+  // экране не добавляет места, а только ужимает карточки.
+  const gridCls = cols === 2
+    ? "grid-cols-1 sm:grid-cols-2"
+    : "grid-cols-2 lg:grid-cols-3";
   const cats = categories ?? [];
 
   return (
@@ -126,6 +135,27 @@ export default function Catalog() {
         <aside className="md:col-span-3">
           <div className="md:sticky md:top-40 flex flex-col gap-8">
             <div>
+              <h3 className="mono-label mb-4" style={{ color: "#1f232099" }}>Город</h3>
+              {cityFilter ? (
+                <div className="flex items-center justify-between gap-2" style={{ fontSize: 15 }}>
+                  <span>{cityFilter}</span>
+                  <button onClick={() => patch({ city: "all" })} className="mono-label underline-link" style={{ background: "none", border: "none", cursor: "pointer", color: "#1f2320", padding: 0 }}>
+                    ✕ вся Россия
+                  </button>
+                </div>
+              ) : (
+                <div className="flex items-center justify-between gap-2" style={{ fontSize: 15 }}>
+                  <span style={{ color: "#1f232099" }}>Вся Россия</span>
+                  {city && (
+                    <button onClick={() => patch({ city: null })} className="mono-label underline-link" style={{ background: "none", border: "none", cursor: "pointer", color: "#1f2320", padding: 0 }}>
+                      только {city}
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+
+            <div>
               <h3 className="mono-label mb-4" style={{ color: "#1f232099" }}>Состояние</h3>
               <div className="flex flex-col gap-3">
                 {(filters?.conditions ?? []).map((c) => (
@@ -171,7 +201,7 @@ export default function Catalog() {
               </div>
               <div className="hidden md:flex gap-1">
                 {[2, 4].map((n) => (
-                  <button key={n} onClick={() => setCols(n)} aria-label={`${n} колонки`} style={{ background: cols === n ? "#1f2320" : "transparent", border: "1px solid " + (cols === n ? "#1f2320" : "#1f232033"), borderRadius: 10, cursor: "pointer", width: 34, height: 34, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  <button key={n} onClick={() => setCols(n)} aria-label={n === 2 ? "Крупные карточки" : "Плотная сетка"} style={{ background: cols === n ? "#1f2320" : "transparent", border: "1px solid " + (cols === n ? "#1f2320" : "#1f232033"), borderRadius: 10, cursor: "pointer", width: 34, height: 34, display: "flex", alignItems: "center", justifyContent: "center" }}>
                     <svg width="14" height="14" viewBox="0 0 14 14"><rect x="1" y="1" width={n === 2 ? 5 : 2.5} height="12" fill={cols === n ? "#efe8da" : "#1f2320"} /><rect x={n === 2 ? 8 : 4} y="1" width={n === 2 ? 5 : 2.5} height="12" fill={cols === n ? "#efe8da" : "#1f2320"} />{n === 4 && <><rect x="7" y="1" width="2.5" height="12" fill={cols === n ? "#efe8da" : "#1f2320"} /><rect x="10.5" y="1" width="2.5" height="12" fill={cols === n ? "#efe8da" : "#1f2320"} /></>}</svg>
                   </button>
                 ))}
@@ -179,10 +209,19 @@ export default function Catalog() {
             </div>
           </div>
 
-          {error ? (
+          {error && items.length > 0 && (
+            <div className="flex items-center justify-between gap-4 mb-4 flex-wrap px-4 py-3" style={{ border: "1px solid #a3333322", borderRadius: 14, background: "#f6f0e3" }}>
+              <span className="mono-label" style={{ color: "#a33" }}>{error.message}</span>
+              <button onClick={reload} className="mono-label" style={{ background: "#1f2320", color: "#efe8da", border: "none", borderRadius: 999, padding: "10px 20px", cursor: "pointer" }}>
+                Повторить
+              </button>
+            </div>
+          )}
+
+          {error && items.length === 0 ? (
             <ErrorState error={error} onRetry={reload} />
           ) : (
-            <LotGrid items={items} loading={loading} className={`grid ${gridCls} gap-3`} />
+            <LotGrid items={items} loading={loading} className={`grid ${gridCls} gap-4`} />
           )}
 
           {/* Pagination */}

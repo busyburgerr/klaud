@@ -1,0 +1,36 @@
+/**
+ * Справочник городов для выбора в шапке и фильтра каталога.
+ * Крупные города России — список можно пополнять прямо в базе.
+ */
+export const CITIES = [
+  { slug: "moskva", name: "Москва", region: "Москва" },
+  { slug: "sankt-peterburg", name: "Санкт-Петербург", region: "Санкт-Петербург" },
+  { slug: "novosibirsk", name: "Новосибирск", region: "Новосибирская область" },
+  { slug: "ekaterinburg", name: "Екатеринбург", region: "Свердловская область" },
+  { slug: "kazan", name: "Казань", region: "Татарстан" },
+  { slug: "nizhniy-novgorod", name: "Нижний Новгород", region: "Нижегородская область" },
+  { slug: "chelyabinsk", name: "Челябинск", region: "Челябинская область" },
+  { slug: "krasnoyarsk", name: "Красноярск", region: "Красноярский край" },
+  { slug: "samara", name: "Самара", region: "Самарская область" },
+  { slug: "ufa", name: "Уфа", region: "Башкортостан" },
+  { slug: "rostov-na-donu", name: "Ростов-на-Дону", region: "Ростовская область" },
+  { slug: "omsk", name: "Омск", region: "Омская область" },
+  { slug: "krasnodar", name: "Краснодар", region: "Краснодарский край" },
+  { slug: "voronezh", name: "Воронеж", region: "Воронежская область" },
+  { slug: "perm", name: "Пермь", region: "Пермский край" },
+  { slug: "volgograd", name: "Волгоград", region: "Волгоградская область" },
+  { slug: "saratov", name: "Саратов", region: "Саратовская область" },
+  { slug: "tyumen", name: "Тюмень", region: "Тюменская область" },
+  { slug: "tolyatti", name: "Тольятти", region: "Самарская область" },
+  { slug: "izhevsk", name: "Ижевск", region: "Удмуртия" },
+  { slug: "barnaul", name: "Барнаул", region: "Алтайский край" },
+  { slug: "irkutsk", name: "Иркутск", region: "Иркутская область" },
+  { slug: "habarovsk", name: "Хабаровск", region: "Хабаровский край" },
+  { slug: "yaroslavl", name: "Ярославль", region: "Ярославская область" },
+  { slug: "vladivostok", name: "Владивосток", region: "Приморский край" },
+  { slug: "tomsk", name: "Томск", region: "Томская область" },
+  { slug: "kaliningrad", name: "Калининград", region: "Калининградская область" },
+  { slug: "sochi", name: "Сочи", region: "Краснодарский край" },
+  { slug: "tula", name: "Тула", region: "Тульская область" },
+  { slug: "kirov", name: "Киров", region: "Кировская область" },
+];

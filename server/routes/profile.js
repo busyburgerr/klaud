@@ -76,6 +76,21 @@ profileRouter.patch(
       .bool("notify_promo")
       .done();
 
+    // Почта: пустая строка снимает привязку.
+    if (req.body?.email !== undefined) {
+      const raw = String(req.body.email ?? "").trim().toLowerCase();
+      if (!raw) {
+        body.email = null;
+      } else {
+        if (!/^[^\s@]+@[^\s@]+\.[a-z]{2,}$/i.test(raw) || raw.length > 160) {
+          throw badRequest("Проверьте адрес почты", { email: "Некорректный адрес" });
+        }
+        const taken = get("SELECT id FROM users WHERE email = ? AND id != ?", raw, req.user.id);
+        if (taken) throw conflict("Эта почта уже привязана к другому аккаунту");
+        body.email = raw;
+      }
+    }
+
     if (req.body?.phone !== undefined) {
       const { phone } = v(req.body).phone("phone").done();
       const taken = get("SELECT id FROM users WHERE phone = ? AND id != ?", phone, req.user.id);
@@ -83,7 +98,7 @@ profileRouter.patch(
       body.phone = phone;
     }
 
-    const fields = ["name", "city", "bio", "type", "phone", "notify_deals", "notify_journal", "notify_promo"]
+    const fields = ["name", "city", "bio", "type", "phone", "email", "notify_deals", "notify_journal", "notify_promo"]
       .filter((f) => body[f] !== undefined);
 
     if (fields.length) {

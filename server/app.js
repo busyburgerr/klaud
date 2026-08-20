@@ -13,7 +13,10 @@ import { categoriesRouter, sellersRouter } from "./routes/catalog.js";
 import { articlesRouter } from "./routes/journal.js";
 import { favoritesRouter } from "./routes/favorites.js";
 import { listingsRouter } from "./routes/listings.js";
-import { metaRouter, uploadsRouter } from "./routes/misc.js";
+import { aboutRouter } from "./routes/about.js";
+import { helpRouter } from "./routes/help.js";
+import { citiesRouter, metaRouter, uploadsRouter } from "./routes/misc.js";
+import { reviewsRouter } from "./routes/reviews.js";
 import { moderationRouter } from "./routes/moderation.js";
 import { profileRouter } from "./routes/profile.js";
 import { threadsRouter } from "./routes/threads.js";
@@ -66,6 +69,10 @@ export function createApp() {
   app.use("/api/profile", profileRouter);
   app.use("/api/uploads", uploadsRouter);
   app.use("/api/meta", metaRouter);
+  app.use("/api/cities", citiesRouter);
+  app.use("/api/help", helpRouter);
+  app.use("/api/about", aboutRouter);
+  app.use("/api/reviews", reviewsRouter);
   app.use("/api/moderation", moderationRouter);
   app.use("/api/admin", adminRouter);
 

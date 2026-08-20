@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import { Link } from "react-router";
-import { ApiError, admin as adminApi, moderation, type LogEntry, type Listing, type Report, type Role, type StaffUser } from "../api";
+import { ApiError, admin as adminApi, moderation, type LogEntry, type Listing, type ProjectStats, type Report, type Role, type StaffUser } from "../api";
 import { useAuth } from "../auth";
 import { useAsync } from "../hooks";
 import { EmptyState, ErrorState, Rule } from "../components";
@@ -39,7 +39,7 @@ export default function Moderation() {
   const isAdmin = user?.role === "admin";
 
   const TABS = isAdmin
-    ? (["Очередь", "Жалобы", "Пользователи", "Журнал"] as const)
+    ? (["Очередь", "Жалобы", "Статистика", "Пользователи", "Журнал"] as const)
     : (["Очередь", "Жалобы", "Журнал"] as const);
   type Tab = (typeof TABS)[number];
 
@@ -106,6 +106,7 @@ export default function Moderation() {
 
       {tab === "Очередь" && <Queue onChange={reloadStats} />}
       {tab === "Жалобы" && <Reports onChange={reloadStats} />}
+      {tab === "Статистика" && isAdmin && <Analytics />}
       {tab === "Пользователи" && isAdmin && <Users currentUserId={user.userId} />}
       {tab === "Журнал" && <Log />}
     </div>
@@ -308,6 +309,120 @@ function Reports({ onChange }: { onChange: () => void }) {
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+/** Статистика проекта: итоги, разрезы по периодам и помесячная динамика. */
+function Analytics() {
+  const { data, loading, error, reload } = useAsync(() => adminApi.overview(), []);
+
+  if (loading) return <p className="mono-label py-8" style={{ color: "#1f232099" }}>Считаем статистику…</p>;
+  if (error) return <div className="py-8"><ErrorState error={error} onRetry={reload} /></div>;
+  if (!data) return null;
+
+  const money = (n: number) => `${n.toLocaleString("ru-RU")} ₽`;
+
+  const TOTALS: { v: string; k: string; hint?: string }[] = [
+    { v: String(data.listings.total), k: "объявлений загружено", hint: `${data.listings.active} в каталоге` },
+    { v: String(data.sales.count), k: "продано лотов", hint: `конверсия ${data.sales.conversion}%` },
+    { v: money(data.sales.revenue), k: "оборот сделок", hint: `средний чек ${money(data.sales.averagePrice)}` },
+    { v: String(data.users.total), k: "пользователей", hint: `${data.users.sellers} с объявлениями` },
+  ];
+
+  const maxTrend = Math.max(1, ...data.trend.map((m) => Math.max(m.created, m.sold)));
+
+  return (
+    <div className="py-8 flex flex-col gap-10">
+      {/* Итоги за всё время */}
+      <div>
+        <h2 className="mono-label mb-4" style={{ color: "#1f232099" }}>За всё время</h2>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-px" style={{ background: "#1f232022", border: "1px solid #1f232022", borderRadius: 16, overflow: "hidden" }}>
+          {TOTALS.map((c) => (
+            <div key={c.k} className="p-6" style={{ background: "#f6f0e3" }}>
+              <p className="font-display m-0" style={{ fontSize: 30, fontWeight: 800, letterSpacing: "-0.02em", lineHeight: 1 }}>{c.v}</p>
+              <p className="mono-label m-0 mt-2" style={{ color: "#1f232099" }}>{c.k}</p>
+              {c.hint && <p className="mono-label m-0 mt-1" style={{ color: "#1f232066" }}>{c.hint}</p>}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Разрез по периодам */}
+      <div>
+        <h2 className="mono-label mb-4" style={{ color: "#1f232099" }}>По периодам</h2>
+        <div style={{ border: "1px solid #1f232022", borderRadius: 16, overflow: "hidden" }}>
+          <div className="grid grid-cols-5 gap-px" style={{ background: "#1f232022" }}>
+            {["Период", "Подано", "Продано", "Оборот", "Новых людей"].map((h) => (
+              <div key={h} className="mono-label px-4 py-3" style={{ background: "#1f2320", color: "#efe8da" }}>{h}</div>
+            ))}
+            {data.periods.map((p) => (
+              <Fragment key={p.period}>
+                <div className="px-4 py-3" style={{ background: "#f6f0e3", fontSize: 14, fontWeight: 600 }}>{p.label}</div>
+                <div className="px-4 py-3" style={{ background: "#f6f0e3", fontSize: 14 }}>{p.listingsCreated}</div>
+                <div className="px-4 py-3" style={{ background: "#f6f0e3", fontSize: 14 }}>{p.listingsSold}</div>
+                <div className="px-4 py-3" style={{ background: "#f6f0e3", fontSize: 14 }}>{money(p.revenue)}</div>
+                <div className="px-4 py-3" style={{ background: "#f6f0e3", fontSize: 14 }}>{p.usersJoined}</div>
+              </Fragment>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* Помесячная динамика */}
+      <div>
+        <h2 className="mono-label mb-4" style={{ color: "#1f232099" }}>Динамика по месяцам · подано / продано</h2>
+        <div className="flex items-end gap-2 overflow-x-auto" style={{ border: "1px solid #1f232022", borderRadius: 16, background: "#f6f0e3", padding: "20px 16px", minHeight: 180 }}>
+          {data.trend.map((m) => (
+            <div key={m.month} className="flex flex-col items-center gap-2" style={{ minWidth: 46 }}>
+              <div className="flex items-end gap-1" style={{ height: 110 }}>
+                <div title={`подано: ${m.created}`} style={{ width: 12, height: `${(m.created / maxTrend) * 100}%`, minHeight: m.created ? 3 : 0, background: "#1f232055", borderRadius: 3 }} />
+                <div title={`продано: ${m.sold}`} style={{ width: 12, height: `${(m.sold / maxTrend) * 100}%`, minHeight: m.sold ? 3 : 0, background: "#1f2320", borderRadius: 3 }} />
+              </div>
+              <span className="mono-label" style={{ color: "#1f232066", fontSize: 10 }}>{m.month.slice(5)}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Прочие показатели */}
+      <div className="grid md:grid-cols-3 gap-4">
+        <Facts title="Лоты" rows={[
+          ["на проверке", data.listings.pending],
+          ["отклонено", data.listings.rejected],
+          ["снято", data.listings.archived],
+          ["просмотров", data.listings.views],
+        ]} />
+        <Facts title="Сделки" rows={[
+          ["средний чек", money(data.sales.averagePrice)],
+          ["средний срок продажи", `${data.sales.averageDays} дн`],
+          ["отзывов", data.content.reviews],
+        ]} />
+        <Facts title="Люди и контент" rows={[
+          ["модераторов", data.users.moderators],
+          ["заблокировано", data.users.blocked],
+          ["с почтой", data.users.withEmail],
+          ["материалов", data.content.articles],
+          ["сообщений", data.content.messages],
+        ]} />
+      </div>
+    </div>
+  );
+}
+
+function Facts({ title, rows }: { title: string; rows: [string, string | number][] }) {
+  return (
+    <div style={{ border: "1px solid #1f232022", borderRadius: 16, background: "#f6f0e3", padding: 20 }}>
+      <h3 className="mono-label mb-3" style={{ color: "#1f232099" }}>{title}</h3>
+      {rows.map(([k, v]) => (
+        <div key={k}>
+          <div className="flex items-center justify-between py-2.5 gap-3">
+            <span style={{ fontSize: 14, color: "#1f2320cc" }}>{k}</span>
+            <span style={{ fontSize: 14, fontWeight: 600 }}>{v}</span>
+          </div>
+          <Rule />
+        </div>
+      ))}
     </div>
   );
 }

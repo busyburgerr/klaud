@@ -8,15 +8,18 @@ CREATE TABLE IF NOT EXISTS users (
   slug           TEXT    NOT NULL UNIQUE,
   name           TEXT    NOT NULL,
   phone          TEXT    NOT NULL UNIQUE,
+  email          TEXT,
   password_hash  TEXT    NOT NULL,
   city           TEXT    NOT NULL DEFAULT 'Москва',
   type           TEXT    NOT NULL DEFAULT 'Частное лицо',
   bio            TEXT    NOT NULL DEFAULT '',
   rating         REAL    NOT NULL DEFAULT 5.0,
+  reviews_count  INTEGER NOT NULL DEFAULT 0,
   deals          INTEGER NOT NULL DEFAULT 0,
   notify_deals   INTEGER NOT NULL DEFAULT 1,
   notify_journal INTEGER NOT NULL DEFAULT 0,
   notify_promo   INTEGER NOT NULL DEFAULT 1,
+  email_verified INTEGER NOT NULL DEFAULT 0,
   role           TEXT    NOT NULL DEFAULT 'user'
                    CHECK (role IN ('user', 'moderator', 'admin')),
   blocked_at     TEXT,
@@ -51,6 +54,8 @@ CREATE TABLE IF NOT EXISTS listings (
   reject_reason TEXT,
   moderated_by  INTEGER REFERENCES users(id) ON DELETE SET NULL,
   moderated_at  TEXT,
+  sold_at       TEXT,
+  sold_to       INTEGER REFERENCES users(id) ON DELETE SET NULL,
   views       INTEGER NOT NULL DEFAULT 0,
   created_at  TEXT    NOT NULL DEFAULT (datetime('now')),
   updated_at  TEXT    NOT NULL DEFAULT (datetime('now'))
@@ -152,3 +157,63 @@ CREATE TABLE IF NOT EXISTS reports (
 );
 
 CREATE INDEX IF NOT EXISTS idx_reports_status ON reports(status, created_at DESC);
+
+-- ── Города ──
+
+-- Справочник городов для выбора в шапке и фильтра каталога.
+CREATE TABLE IF NOT EXISTS cities (
+  slug     TEXT    PRIMARY KEY,
+  name     TEXT    NOT NULL,
+  region   TEXT    NOT NULL DEFAULT '',
+  position INTEGER NOT NULL DEFAULT 0
+);
+
+-- ── Отзывы о сделках ──
+
+-- Один отзыв на пару «лот + автор»: покупатель оценивает продавца после сделки.
+CREATE TABLE IF NOT EXISTS reviews (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  listing_id   INTEGER NOT NULL REFERENCES listings(id) ON DELETE CASCADE,
+  author_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  target_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  rating       INTEGER NOT NULL CHECK (rating BETWEEN 1 AND 5),
+  deal_success INTEGER NOT NULL DEFAULT 1,
+  text         TEXT    NOT NULL DEFAULT '',
+  created_at   TEXT    NOT NULL DEFAULT (datetime('now')),
+  UNIQUE (listing_id, author_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_reviews_target ON reviews(target_id, created_at DESC);
+
+-- ── Справка ──
+-- Разделы и вопросы страницы «Помощь». Контент лежит в базе, а не в вёрстке.
+CREATE TABLE IF NOT EXISTS help_topics (
+  slug     TEXT    PRIMARY KEY,
+  n        TEXT    NOT NULL,
+  title    TEXT    NOT NULL,
+  blurb    TEXT    NOT NULL DEFAULT '',
+  position INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS faq (
+  id       INTEGER PRIMARY KEY AUTOINCREMENT,
+  category TEXT    NOT NULL,
+  question TEXT    NOT NULL,
+  answer   TEXT    NOT NULL,
+  position INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS idx_faq_category ON faq(category, position);
+
+-- ── О проекте ──
+-- Принципы и вехи страницы «О проекте». `kind` разделяет два вида блоков.
+CREATE TABLE IF NOT EXISTS about_blocks (
+  id       INTEGER PRIMARY KEY AUTOINCREMENT,
+  kind     TEXT    NOT NULL CHECK (kind IN ('principle', 'milestone')),
+  label    TEXT    NOT NULL,
+  title    TEXT    NOT NULL,
+  text     TEXT    NOT NULL DEFAULT '',
+  position INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS idx_about_kind ON about_blocks(kind, position);

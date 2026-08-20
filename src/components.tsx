@@ -46,40 +46,60 @@ export function LotCard({ item }: { item: Listing }) {
     <Link to={`/lot/${item.id}`} className="lot relative grain block" style={{ border: "1px solid #1f232022", borderRadius: 18, overflow: "hidden", background: "#f6f0e3", textDecoration: "none", color: "inherit" }}>
       <div className="relative" style={{ background: "#e1d9c8", aspectRatio: "4/5", overflow: "hidden", zIndex: 2 }}>
         <img className="lot-img" src={item.img} alt={item.title} loading="lazy" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
-        <span className="mono-label absolute top-3 left-3" style={{ background: "#efe8da", color: "#1f2320", borderRadius: 8, padding: "4px 8px" }}>Лот {item.lot}</span>
-        {item.status === "pending" ? (
-          <span className="mono-label absolute top-3 right-3" style={{ background: "#efe8da", color: "#1f2320", border: "1px solid #1f232033", borderRadius: 8, padding: "4px 8px" }}>На проверке</span>
-        ) : item.badge ? (
-          <span className="mono-label absolute top-3 right-3" style={{ background: "#1f2320", color: "#efe8da", borderRadius: 8, padding: "4px 8px" }}>{item.badge}</span>
-        ) : null}
+        {/* Плашки в одном ряду: по отдельным углам они наезжают на узкой карточке. */}
+        <div className="absolute top-3 left-3 right-3 flex items-start justify-between gap-2">
+          <span className="mono-label" style={{ background: "#efe8da", color: "#1f2320", borderRadius: 8, padding: "4px 8px", whiteSpace: "nowrap", flexShrink: 0 }}>
+            Лот {item.lot}
+          </span>
+          {item.status === "pending" ? (
+            <span className="mono-label" style={{ ...badgeStyle, background: "#efe8da", color: "#1f2320", border: "1px solid #1f232033" }}>На проверке</span>
+          ) : item.badge ? (
+            <span className="mono-label" style={{ ...badgeStyle, background: "#1f2320", color: "#efe8da" }}>{item.badge}</span>
+          ) : null}
+        </div>
         <span className="absolute bottom-3 right-3"><WishHeart id={item.id} /></span>
       </div>
-      <div className="lot-meta relative p-4" style={{ zIndex: 2 }}>
-        <div className="flex items-baseline justify-between gap-2">
-          <p className="font-display m-0" style={{ fontSize: 22, fontWeight: 700, letterSpacing: "-0.01em" }}>{item.price} ₽</p>
-          <span className="mono-label" style={{ color: "#1f232088" }}>{item.cond}</span>
+      <div className="lot-meta relative p-5" style={{ zIndex: 2 }}>
+        <div className="flex items-baseline justify-between gap-2 flex-wrap">
+          {/* Цену не разрываем: разделители разрядов — обычные пробелы. */}
+          {/* На узкой карточке крупный кегль не вмещает семизначные суммы. */}
+          <p className="font-display m-0" style={{ fontSize: "clamp(17px,3.6vw,24px)", fontWeight: 700, letterSpacing: "-0.01em", whiteSpace: "nowrap" }}>
+            {item.price} ₽
+          </p>
+          <span className="mono-label" style={{ color: "#1f232088", whiteSpace: "nowrap" }}>{item.cond}</span>
         </div>
-        <p className="m-0 mt-1.5" style={{ fontSize: 13, lineHeight: 1.35, color: "#1f2320dd", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden", minHeight: 36 }}>
+        <p className="m-0 mt-2" style={{ fontSize: 14.5, lineHeight: 1.4, color: "#1f2320dd", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden", minHeight: 41 }}>
           {item.title}
         </p>
-        <div className="flex items-center justify-between mt-3 pt-3" style={{ borderTop: "1px solid #1f232022" }}>
-          <span className="mono-label" style={{ color: "#1f232088" }}>{item.location}</span>
-          <span className="mono-label" style={{ color: "#1f232088" }}>{item.time}</span>
+        <div className="flex items-center justify-between gap-2 mt-3 pt-3" style={{ borderTop: "1px solid #1f232022" }}>
+          <span className="mono-label" style={{ color: "#1f232088", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>
+            {item.location}
+          </span>
+          <span className="mono-label" style={{ color: "#1f232088", whiteSpace: "nowrap", flexShrink: 0 }}>{item.time}</span>
         </div>
       </div>
     </Link>
   );
 }
 
+const badgeStyle = {
+  borderRadius: 8,
+  padding: "4px 8px",
+  overflow: "hidden",
+  textOverflow: "ellipsis",
+  whiteSpace: "nowrap",
+  minWidth: 0,
+} as const;
+
 /** Плейсхолдер карточки на время запроса — сетка не «прыгает». */
 export function LotSkeleton() {
   return (
     <div style={{ border: "1px solid #1f232022", borderRadius: 18, overflow: "hidden", background: "#f6f0e3" }}>
       <div className="pulse" style={{ aspectRatio: "4/5", background: "#e1d9c8" }} />
-      <div className="p-4">
-        <div className="pulse" style={{ height: 22, width: "60%", background: "#e1d9c8", borderRadius: 6 }} />
-        <div className="pulse mt-2" style={{ height: 13, width: "90%", background: "#e1d9c8", borderRadius: 6 }} />
-        <div className="pulse mt-2" style={{ height: 13, width: "40%", background: "#e1d9c8", borderRadius: 6 }} />
+      <div className="p-5">
+        <div className="pulse" style={{ height: 24, width: "60%", background: "#e1d9c8", borderRadius: 6 }} />
+        <div className="pulse mt-2" style={{ height: 14, width: "90%", background: "#e1d9c8", borderRadius: 6 }} />
+        <div className="pulse mt-2" style={{ height: 14, width: "40%", background: "#e1d9c8", borderRadius: 6 }} />
       </div>
     </div>
   );

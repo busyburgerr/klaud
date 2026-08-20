@@ -4,6 +4,7 @@ import api, { ApiError } from "../api";
 import { useAuth } from "../auth";
 import { useAsync } from "../hooks";
 import { EmptyState, LotGrid, Rule } from "../components";
+import { ReviewList, ReviewSummaryCard } from "../Reviews";
 
 export default function Seller() {
   const { id } = useParams();
@@ -16,6 +17,7 @@ export default function Seller() {
     () => api.sellerListings(id!, { limit: 24 }),
     [id],
   );
+  const { data: reviews } = useAsync(() => api.userReviews(id!), [id]);
 
   if (loading) {
     return (
@@ -57,8 +59,8 @@ export default function Seller() {
 
   const STATS = [
     { k: "На Клауд с", v: seller.since },
-    { k: "Сделок", v: String(seller.deals) },
-    { k: "Рейтинг", v: `★ ${seller.rating}` },
+    { k: "Сделок", v: String(reviews?.summary.successful ?? seller.deals) },
+    { k: "Рейтинг", v: reviews?.summary.rating ? `★ ${reviews.summary.rating}` : "—" },
     { k: "Активных лотов", v: String(seller.activeListings) },
   ];
 
@@ -129,6 +131,21 @@ export default function Seller() {
           className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3"
           empty={<EmptyState title="Активных лотов нет" />}
         />
+      </section>
+
+      <Rule />
+
+      {/* Отзывы о сделках */}
+      <section className="py-8 pb-16">
+        <div className="flex items-end justify-between mb-6 flex-wrap gap-3">
+          <h2 className="font-display" style={{ fontSize: "clamp(24px,3vw,40px)", fontWeight: 800, letterSpacing: "-0.02em" }}>Отзывы</h2>
+          <span className="mono-label" style={{ color: "#1f232099" }}>оставляют покупатели после сделки</span>
+        </div>
+
+        {reviews && reviews.summary.total > 0 && (
+          <div className="mb-8"><ReviewSummaryCard summary={reviews.summary} /></div>
+        )}
+        <ReviewList items={reviews?.items ?? []} empty="Отзывов о продавце пока нет" />
       </section>
     </div>
   );

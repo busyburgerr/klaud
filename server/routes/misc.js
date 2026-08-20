@@ -4,13 +4,15 @@ import { randomUUID } from "node:crypto";
 import { Router } from "express";
 import multer from "multer";
 import { config } from "../config.js";
-import { get } from "../db/index.js";
+import { all, get } from "../db/index.js";
 import { formatPrice } from "../lib/format.js";
 import { badRequest } from "../lib/http.js";
 import { queryListings } from "../lib/listings.js";
+import { publicMetrics } from "../lib/stats.js";
 import { requireAuth } from "../middleware/auth.js";
 
 export const metaRouter = Router();
+export const citiesRouter = Router();
 export const uploadsRouter = Router();
 
 /** Подписи «быстрых ссылок» и вкладок с главной страницы. */
@@ -51,6 +53,11 @@ metaRouter.get("/", (_req, res) => {
   });
 });
 
+// GET /api/meta/metrics — витринные показатели площадки, все из базы
+metaRouter.get("/metrics", (_req, res) => {
+  res.json({ metrics: publicMetrics() });
+});
+
 // GET /api/meta/home — всё, что нужно главной странице, одним запросом
 metaRouter.get("/home", (req, res) => {
   const featured = queryListings({ limit: 8 }, { viewerId: req.user?.id });
@@ -83,4 +90,25 @@ uploadsRouter.post("/", requireAuth, upload.array("images", 10), (req, res) => {
   const files = req.files || [];
   if (!files.length) throw badRequest("Не передано ни одного файла");
   res.status(201).json({ urls: files.map((f) => `/uploads/${f.filename}`) });
+});
+
+// ── Города ──
+
+// GET /api/cities — справочник для выбора города в шапке
+citiesRouter.get("/", (_req, res) => {
+  const rows = all(`
+    SELECT c.*,
+           (SELECT COUNT(*) FROM listings l
+             WHERE l.location = c.name AND l.status = 'active') AS listing_count
+      FROM cities c
+     ORDER BY c.position, c.name`);
+
+  res.json({
+    items: rows.map((c) => ({
+      slug: c.slug,
+      name: c.name,
+      region: c.region,
+      listingCount: c.listing_count,
+    })),
+  });
 });

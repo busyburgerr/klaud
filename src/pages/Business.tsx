@@ -1,12 +1,7 @@
 import { Link } from "react-router";
+import api from "../api";
+import { useAsync } from "../hooks";
 import { Rule } from "../components";
-
-const STATS = [
-  { v: "4.2 млн", k: "покупателей в месяц" },
-  { v: "890 244", k: "активных продавца" },
-  { v: "312", k: "города с доставкой" },
-  { v: "24 ч", k: "средний срок продажи" },
-];
 
 const FEATURES = [
   { n: "01", t: "Витрина магазина", d: "Отдельная полоса бренда с логотипом, описанием и всеми лотами в едином оформлении каталога." },
@@ -24,6 +19,16 @@ const PLANS = [
 ];
 
 export default function Business() {
+  // Показатели площадки считаются по базе, а не зашиты в вёрстку.
+  const { data: metrics } = useAsync(() => api.metrics(), []);
+
+  const STATS = [
+    { v: metrics ? String(metrics.buyers) : "—", k: "зарегистрированных покупателей" },
+    { v: metrics ? String(metrics.sellers) : "—", k: "продавцов с лотами" },
+    { v: metrics ? String(metrics.cities) : "—", k: "городов с объявлениями" },
+    { v: metrics?.sellTime ?? "—", k: "средний срок продажи" },
+  ];
+
   return (
     <div className="max-w-7xl mx-auto px-5 md:px-10">
       <div className="flex items-center gap-2 py-5 mono-label" style={{ color: "#1f232099" }}>

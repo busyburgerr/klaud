@@ -22,7 +22,9 @@ export function useAsync<T>(fn: () => Promise<T>, deps: unknown[] = []): AsyncSt
         if (!cancelled) setState({ data, error: null, loading: false });
       })
       .catch((error: Error) => {
-        if (!cancelled) setState({ data: null, error, loading: false });
+        // Прежние данные не стираем: при обрыве связи лучше показать
+        // список с сообщением об ошибке, чем пустой экран.
+        if (!cancelled) setState((prev) => ({ data: prev.data, error, loading: false }));
       });
 
     return () => {

@@ -18,7 +18,8 @@ export function publicUser(row) {
     initial: initialOf(row.name),
     since: yearOf(row.created_at),
     deals: row.deals,
-    rating: Number(row.rating).toFixed(1),
+    // Пока отзывов нет, рейтинга тоже нет — нули в звёздах не рисуем.
+    rating: Number(row.rating) > 0 ? Number(row.rating).toFixed(1) : null,
     city: row.city,
     type: row.type,
     bio: row.bio,
@@ -33,6 +34,8 @@ export function privateUser(row) {
     ...publicUser(row),
     phone: displayPhone(row.phone),
     phoneRaw: row.phone,
+    email: row.email ?? null,
+    emailVerified: !!row.email_verified,
     notify: {
       deals: !!row.notify_deals,
       journal: !!row.notify_journal,
@@ -208,5 +211,22 @@ export function staffUser(row) {
     blocked: !!row.blocked_at,
     blockedReason: row.blocked_reason ?? null,
     createdAt: row.created_at,
+  };
+}
+
+/** Отзыв о сделке: кто, о ком, по какому лоту и удалась ли сделка. */
+export function review(row) {
+  return {
+    id: row.id,
+    listingId: row.listing_id,
+    listingTitle: row.listing_title,
+    listingLot: row.listing_lot,
+    rating: row.rating,
+    dealSuccess: !!row.deal_success,
+    text: row.text,
+    author: { name: row.author_name, id: row.author_slug },
+    target: { name: row.target_name, id: row.target_slug },
+    createdAt: row.created_at,
+    age: humanizeAge(row.created_at),
   };
 }

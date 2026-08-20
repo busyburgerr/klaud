@@ -14,7 +14,8 @@
     "api:test": "node --experimental-sqlite --test server/test/*.test.js",
     "start": "node --experimental-sqlite --env-file-if-exists=.env server/start.js",
     "typecheck": "tsc --noEmit",
-    "api:reset": "node --experimental-sqlite server/db/seed.js --clean"
+    "api:reset": "node --experimental-sqlite server/db/seed.js --clean",
+    "api:catalog": "node --experimental-sqlite server/db/fill-catalog.js"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",

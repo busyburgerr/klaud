@@ -12,8 +12,9 @@ const CONDITIONS = ["Новое", "Отличное", "Хорошее", "Тре�
 /**
  * Статусы, которые владелец может выставить сам. Публикация (`active`) и отказ
  * (`rejected`) — только через модерацию, см. routes/moderation.js.
+ * Продажа оформляется через POST /:id/sell — там указывается покупатель.
  */
-const OWNER_STATUSES = ["sold", "archived"];
+const OWNER_STATUSES = ["archived"];
 
 /** Следующий номер лота: 0417 → 0418. */
 function nextLotNumber() {
@@ -157,6 +158,51 @@ listingsRouter.delete(
     const existing = ownedListing(req.params.id, req.user.id);
     run("DELETE FROM listings WHERE id = ?", existing.id);
     res.json({ ok: true, id: existing.id });
+  }),
+);
+
+// POST /api/listings/:id/sell — отметить лот проданным
+listingsRouter.post(
+  "/:id/sell",
+  requireAuth,
+  wrap((req, res) => {
+    const existing = ownedListing(req.params.id, req.user.id);
+    if (existing.status === "sold") throw badRequest("Лот уже отмечен проданным");
+
+    const body = v(req.body).int("buyerId", { min: 1 }).done();
+
+    let buyerId = null;
+    if (body.buyerId) {
+      const buyer = get("SELECT id FROM users WHERE id = ?", body.buyerId);
+      if (!buyer) throw badRequest("Покупатель не найден", { buyerId: "Нет такого пользователя" });
+      if (buyer.id === req.user.id) throw badRequest("Нельзя продать лот самому себе");
+      buyerId = buyer.id;
+    }
+
+    run(
+      `UPDATE listings SET status = 'sold', sold_at = datetime('now'), sold_to = ?,
+                           updated_at = datetime('now')
+        WHERE id = ?`,
+      buyerId, existing.id,
+    );
+    res.json({ listing: findListing(existing.id, { viewerId: req.user.id }) });
+  }),
+);
+
+// GET /api/listings/:id/buyers — с кем шла переписка по лоту
+listingsRouter.get(
+  "/:id/buyers",
+  requireAuth,
+  wrap((req, res) => {
+    const existing = ownedListing(req.params.id, req.user.id);
+    const rows = all(
+      `SELECT u.id, u.name, u.slug FROM threads t
+         JOIN users u ON u.id = t.buyer_id
+        WHERE t.listing_id = ?
+        ORDER BY t.updated_at DESC`,
+      existing.id,
+    );
+    res.json({ items: rows.map((r) => ({ userId: r.id, name: r.name, id: r.slug })) });
   }),
 );
 

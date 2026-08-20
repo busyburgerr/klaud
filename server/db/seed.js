@@ -2,6 +2,9 @@ import path from "node:path";
 import bcrypt from "bcryptjs";
 import { displayPhone } from "../lib/format.js";
 import { all, db, get, migrate, run, tx } from "./index.js";
+import { CITIES } from "./cities.js";
+import { MILESTONES, PRINCIPLES } from "./about-content.js";
+import { FAQ, HELP_TOPICS } from "./help-content.js";
 import { ARTICLES, CATEGORIES, LISTINGS, SELLERS } from "./seed-data.js";
 
 /** Пароль всех демо-аккаунтов. */
@@ -107,8 +110,9 @@ export function isSeeded() {
 
 export function reset() {
   for (const t of [
-    "moderation_log", "reports", "messages", "threads", "favorites",
-    "listing_images", "listings", "articles", "categories", "users",
+    "moderation_log", "reports", "reviews", "messages", "threads", "favorites",
+    "listing_images", "listings", "articles", "categories", "cities",
+    "help_topics", "faq", "about_blocks", "users",
   ]) {
     db.exec(`DELETE FROM ${t}`);
   }
@@ -143,6 +147,14 @@ export function seed({ force = false, demo = true } = {}) {
       );
     });
 
+    // ── Города ──
+    CITIES.forEach((c, i) => {
+      run(
+        "INSERT INTO cities (slug, name, region, position) VALUES (?, ?, ?, ?)",
+        c.slug, c.name, c.region, i,
+      );
+    });
+
     // ── Пользователи ──
     const userIdBySlug = new Map();
 
@@ -157,6 +169,34 @@ export function seed({ force = false, demo = true } = {}) {
     };
 
     for (const staff of STAFF) insertUser(staff, `${staff.since}-01-09 08:00:00`);
+    // ── Справка ──
+    HELP_TOPICS.forEach((t, i) => {
+      run(
+        "INSERT INTO help_topics (slug, n, title, blurb, position) VALUES (?, ?, ?, ?, ?)",
+        t.slug, t.n, t.title, t.blurb, i,
+      );
+    });
+    FAQ.forEach((q, i) => {
+      run(
+        "INSERT INTO faq (category, question, answer, position) VALUES (?, ?, ?, ?)",
+        q.category, q.question, q.answer, i,
+      );
+    });
+
+    // ── О проекте ──
+    PRINCIPLES.forEach((p, i) => {
+      run(
+        "INSERT INTO about_blocks (kind, label, title, text, position) VALUES ('principle', ?, ?, ?, ?)",
+        p.n, p.title, p.text, i,
+      );
+    });
+    MILESTONES.forEach((m, i) => {
+      run(
+        "INSERT INTO about_blocks (kind, label, title, text, position) VALUES ('milestone', ?, ?, ?, ?)",
+        m.period, m.title, m.text, i,
+      );
+    });
+
     if (!demo) return;
 
     insertUser(DEMO_USER, `${DEMO_USER.since}-03-12 09:20:00`);

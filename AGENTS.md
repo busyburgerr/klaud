@@ -48,6 +48,8 @@ This project uses **Tailwind CSS v4** through the `@tailwindcss/vite` plugin con
 - `src/api.ts` — типизированный клиент API (единственное место с `fetch`)
 - `src/auth.tsx` — `AuthProvider`, `useAuth`, `RequireAuth` для закрытых страниц
 - `src/store.tsx` — избранное, синхронизируется с сервером при входе
+- `src/city.tsx` — выбранный город (шапка + фильтр каталога), хранится локально
+- `src/Reviews.tsx` — сводка рейтинга и список отзывов о сделках
 - `src/hooks.ts` — `useAsync` (загрузка с защитой от гонок) и `useDebounced`
 - `src/routes.tsx` — маршруты; `/account`, `/messages`, `/new` обёрнуты в `RequireAuth`,
   `/moderation` — в `RequireRole` (роль не ниже `moderator`)
@@ -94,5 +96,6 @@ NODE_ENV=production JWT_SECRET=<секрет> pnpm start
 
 - `pnpm run api:seed -- --force` — пересоздать демо-данные
 - `pnpm run api:reset` — очистить базу до категорий и аккаунтов персонала
+- `pnpm run api:catalog` — наполнить каталог лотами во всех разделах
 - `pnpm run api:test` — тесты API на `node:test`
 - `pnpm run typecheck` — проверка типов

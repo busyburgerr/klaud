@@ -114,9 +114,17 @@ export default function Lot() {
         <div className="md:col-span-7">
           <div className="overflow-hidden relative" style={{ borderRadius: 20, background: "#e1d9c8", aspectRatio: "4/5" }}>
             <img src={listing.images[shot] ?? listing.img} alt={listing.title} style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
-            <span className="mono-label absolute top-4 left-4" style={{ background: "#efe8da", color: "#1f2320", borderRadius: 8, padding: "6px 10px" }}>Лот {listing.lot}</span>
-            {listing.status === "pending" && <span className="mono-label absolute top-4 right-4" style={{ background: "#efe8da", color: "#1f2320", border: "1px solid #1f232033", borderRadius: 8, padding: "6px 10px" }}>На проверке</span>}
-            {listing.status !== "pending" && listing.badge && <span className="mono-label absolute top-4 right-4" style={{ background: "#1f2320", color: "#efe8da", borderRadius: 8, padding: "6px 10px" }}>{listing.badge}</span>}
+            {/* Плашки одной строкой, чтобы не наезжали друг на друга. */}
+            <div className="absolute top-4 left-4 right-4 flex items-start justify-between gap-2">
+              <span className="mono-label" style={{ background: "#efe8da", color: "#1f2320", borderRadius: 8, padding: "6px 10px", whiteSpace: "nowrap", flexShrink: 0 }}>
+                Лот {listing.lot}
+              </span>
+              {listing.status === "pending" ? (
+                <span className="mono-label" style={{ background: "#efe8da", color: "#1f2320", border: "1px solid #1f232033", borderRadius: 8, padding: "6px 10px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", minWidth: 0 }}>На проверке</span>
+              ) : listing.badge ? (
+                <span className="mono-label" style={{ background: "#1f2320", color: "#efe8da", borderRadius: 8, padding: "6px 10px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", minWidth: 0 }}>{listing.badge}</span>
+              ) : null}
+            </div>
           </div>
 
           {listing.images.length > 1 && (
@@ -135,7 +143,9 @@ export default function Lot() {
           <div className="md:sticky md:top-40">
             <span className="mono-label" style={{ color: "#1f232099" }}>{cat?.label} · Раздел {cat?.n}</span>
             <h1 className="font-display mt-3" style={{ fontSize: "clamp(30px,4vw,48px)", fontWeight: 700, lineHeight: 1, letterSpacing: "-0.02em" }}>{listing.title}</h1>
-            <p className="font-display mt-5" style={{ fontSize: 40, fontWeight: 800, letterSpacing: "-0.02em" }}>{listing.price} ₽</p>
+            <p className="font-display mt-5" style={{ fontSize: "clamp(30px,5vw,40px)", fontWeight: 800, letterSpacing: "-0.02em", whiteSpace: "nowrap" }}>
+              {listing.price} ₽
+            </p>
 
             {isMine ? (
               <div className="flex gap-3 mt-6">

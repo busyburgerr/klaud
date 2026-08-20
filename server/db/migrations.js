@@ -17,6 +17,11 @@ export function applyMigrations() {
   addColumn("articles", "author_id", "INTEGER");
   addColumn("articles", "status", "TEXT NOT NULL DEFAULT 'published'");
   addColumn("articles", "updated_at", "TEXT");
+  addColumn("users", "email", "TEXT");
+  addColumn("users", "email_verified", "INTEGER NOT NULL DEFAULT 0");
+  addColumn("users", "reviews_count", "INTEGER NOT NULL DEFAULT 0");
+  addColumn("listings", "sold_at", "TEXT");
+  addColumn("listings", "sold_to", "INTEGER");
 
   allowRejectedStatus();
   allowArticleLogTarget();
@@ -25,6 +30,14 @@ export function applyMigrations() {
   db.exec("CREATE INDEX IF NOT EXISTS idx_users_role ON users(role)");
   db.exec("CREATE INDEX IF NOT EXISTS idx_listings_moderated ON listings(moderated_at DESC)");
   db.exec("CREATE INDEX IF NOT EXISTS idx_articles_status ON articles(status, published_at DESC)");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_listings_sold ON listings(sold_at)");
+  // Почта необязательна, но повторяться не должна.
+  db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email ON users(email) WHERE email IS NOT NULL");
+  db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email ON users(email) WHERE email IS NOT NULL");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_listings_sold ON listings(sold_at DESC)");
+  // UNIQUE на email нельзя добавить через ALTER — делаем уникальный индекс.
+  db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email ON users(email) WHERE email IS NOT NULL");
+  db.exec("CREATE INDEX IF NOT EXISTS idx_listings_sold ON listings(sold_at DESC)");
 }
 
 const hasColumn = (table, column) =>

@@ -2,6 +2,7 @@ import { Router } from "express";
 import { all, get, run, tx } from "../db/index.js";
 import { badRequest, forbidden, notFound, wrap } from "../lib/http.js";
 import * as S from "../lib/serialize.js";
+import { PERIODS, monthlyTrend, periodStats, projectStats } from "../lib/stats.js";
 import { v } from "../lib/validate.js";
 import { requireRole } from "../middleware/auth.js";
 import { logAction } from "./moderation.js";
@@ -56,6 +57,24 @@ adminRouter.get("/stats", (_req, res) => {
     blocked: get("SELECT COUNT(*) AS c FROM users WHERE blocked_at IS NOT NULL").c,
   });
 });
+
+// GET /api/admin/overview — статистика проекта за всё время и по периодам
+adminRouter.get("/overview", (_req, res) => {
+  res.json({
+    ...projectStats(),
+    trend: monthlyTrend(12),
+    periodKeys: Object.entries(PERIODS).map(([key, p]) => ({ key, label: p.label })),
+  });
+});
+
+// GET /api/admin/overview/:period — показатели одного периода
+adminRouter.get(
+  "/overview/:period",
+  wrap((req, res) => {
+    if (!PERIODS[req.params.period]) throw badRequest("Неизвестный период");
+    res.json({ stats: periodStats(req.params.period) });
+  }),
+);
 
 // PATCH /api/admin/users/:id/role — назначение и снятие модератора
 adminRouter.patch(

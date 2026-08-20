@@ -42,7 +42,7 @@ export type Seller = {
   initial: string;
   since: string;
   deals: number;
-  rating: string;
+  rating: string | null;
   city: string;
   type: string;
   bio: string;
@@ -89,8 +89,92 @@ export type LogEntry = {
 export type Profile = Seller & {
   phone: string;
   phoneRaw: string;
+  email: string | null;
+  emailVerified: boolean;
   notify: { deals: boolean; journal: boolean; promo: boolean };
 };
+
+export type City = { slug: string; name: string; region: string; listingCount: number };
+
+/** Отзыв о сделке. */
+export type Review = {
+  id: number;
+  listingId: number;
+  listingTitle: string;
+  listingLot: string;
+  rating: number;
+  dealSuccess: boolean;
+  text: string;
+  author: { name: string; id: string };
+  target: { name: string; id: string };
+  createdAt: string;
+  age: string;
+};
+
+export type ReviewSummary = {
+  total: number;
+  rating: string | null;
+  successful: number;
+  failed: number;
+  breakdown: { star: number; count: number }[];
+};
+
+/** Сделка, по которой покупатель ещё не оставил отзыв. */
+export type PendingReview = {
+  listingId: number;
+  lot: string;
+  title: string;
+  img: string;
+  seller: { name: string; id: string };
+  soldAt: string;
+};
+
+/** Витринные показатели площадки — считаются из базы. */
+export type SiteMetrics = {
+  activeListings: number;
+  sellers: number;
+  buyers: number;
+  cities: number;
+  sold: number;
+  sellTime: string | null;
+  reviews: number;
+  rating: string | null;
+};
+
+export type PeriodStats = {
+  period: string;
+  label: string;
+  listingsCreated: number;
+  listingsSold: number;
+  revenue: number;
+  usersJoined: number;
+  reviews: number;
+};
+
+/** Полная статистика проекта для администратора. */
+export type ProjectStats = {
+  listings: { total: number; active: number; pending: number; rejected: number; sold: number; archived: number; views: number };
+  sales: { count: number; revenue: number; averagePrice: number; averageDays: number; conversion: number };
+  users: { total: number; moderators: number; admins: number; blocked: number; withEmail: number; sellers: number };
+  content: { articles: number; drafts: number; reviews: number; openReports: number; messages: number };
+  periods: PeriodStats[];
+  trend: { month: string; created: number; sold: number; revenue: number }[];
+  periodKeys: { key: string; label: string }[];
+};
+
+/** Содержимое страницы «О проекте». */
+export type AboutPage = {
+  project: { since: string; title: string; lead: string };
+  principles: { n: string; title: string; text: string }[];
+  milestones: { period: string; title: string; text: string }[];
+  team: { id: string; name: string; initial: string; role: string; bio: string }[];
+  metrics: SiteMetrics;
+};
+
+/** Содержимое страницы «Помощь». */
+export type HelpTopic = { slug: string; n: string; title: string; blurb: string };
+export type FaqItem = { id: number; category: string; question: string; answer: string };
+export type Support = { email: string; phone: string; hours: string; responseTime: string };
 
 export type Category = {
   slug: string;
@@ -208,22 +292,48 @@ export const auth = {
   },
 };
 
+/** Пауза между повторами при обрыве связи. */
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
   const isForm = body instanceof FormData;
-  const res = await fetch(`/api${path}`, {
-    method,
-    credentials: "include",
-    headers: {
-      ...(body && !isForm ? { "Content-Type": "application/json" } : {}),
-      ...(auth.token ? { Authorization: `Bearer ${auth.token}` } : {}),
-    },
-    body: isForm ? body : body ? JSON.stringify(body) : undefined,
-  });
+  // Чтение можно безопасно повторить: обрыв связи на пути к серверу
+  // не означает, что запрос выполнился.
+  const attempts = method === "GET" ? 3 : 1;
 
-  const text = await res.text();
-  const data = text ? JSON.parse(text) : null;
+  let res: Response | undefined;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      res = await fetch(`/api${path}`, {
+        method,
+        credentials: "include",
+        headers: {
+          ...(body && !isForm ? { "Content-Type": "application/json" } : {}),
+          ...(auth.token ? { Authorization: `Bearer ${auth.token}` } : {}),
+        },
+        body: isForm ? body : body ? JSON.stringify(body) : undefined,
+      });
+      break;
+    } catch {
+      // fetch падает только при обрыве соединения: сервер недоступен,
+      // перезапускается или пропала сеть.
+      if (attempt === attempts) {
+        throw new ApiError(0, "Нет связи с сервером. Проверьте, запущен ли API, и повторите.");
+      }
+      await sleep(attempt * 400);
+    }
+  }
 
-  if (!res.ok) throw new ApiError(res.status, data?.error ?? res.statusText, data?.details);
+  const text = await res!.text();
+  let data: any = null;
+  try {
+    data = text ? JSON.parse(text) : null;
+  } catch {
+    // Не JSON — обычно это страница ошибки от прокси или обратного прокси.
+    throw new ApiError(res!.status, `Сервер вернул неожиданный ответ (${res!.status})`);
+  }
+
+  if (!res!.ok) throw new ApiError(res!.status, data?.error ?? res!.statusText, data?.details);
   return data as T;
 }
 
@@ -277,6 +387,12 @@ export const api = {
     request<{ article: Article }>("PATCH", `/articles/${slug}`, input).then((r) => r.article),
   deleteArticle: (slug: string) => request<{ ok: true }>("DELETE", `/articles/${slug}`),
 
+  cities: () => request<{ items: City[] }>("GET", "/cities").then((r) => r.items),
+  about: () => request<AboutPage>("GET", "/about"),
+  help: () =>
+    request<{ topics: HelpTopic[]; questions: FaqItem[]; categories: string[]; support: Support }>("GET", "/help"),
+  metrics: () => request<{ metrics: SiteMetrics }>("GET", "/meta/metrics").then((r) => r.metrics),
+
   meta: () =>
     request<{
       issue: string;
@@ -318,6 +434,7 @@ export const api = {
     phone?: string;
     city?: string;
     bio?: string;
+    email?: string;
     notify?: Partial<{ deals: boolean; journal: boolean; promo: boolean }>;
   }) => request<{ user: Profile }>("PATCH", "/profile", input).then((r) => r.user),
   changePassword: (input: { current: string; next: string }) =>
@@ -336,6 +453,24 @@ export const api = {
   updateListing: (id: number, input: Partial<{ title: string; price: number; cat: string; cond: string; description: string; location: string; status: string; images: string[] }>) =>
     request<{ listing: Listing }>("PATCH", `/listings/${id}`, input).then((r) => r.listing),
   deleteListing: (id: number) => request<{ ok: true }>("DELETE", `/listings/${id}`),
+  /** Покупатели, писавшие по лоту — из них выбирается получатель при продаже. */
+  listingBuyers: (id: number) =>
+    request<{ items: { userId: number; name: string; id: string }[] }>("GET", `/listings/${id}/buyers`).then((r) => r.items),
+  /** Отметить лот проданным; покупатель нужен, чтобы он смог оставить отзыв. */
+  sellListing: (id: number, buyerId?: number) =>
+    request<{ listing: Listing }>("POST", `/listings/${id}/sell`, { buyerId }).then((r) => r.listing),
+
+  // ── Отзывы ──
+  userReviews: (slug: string) =>
+    request<{ items: Review[]; summary: ReviewSummary }>("GET", `/reviews/user/${slug}`),
+  listingReviews: (id: number) =>
+    request<{ items: Review[] }>("GET", `/reviews/listing/${id}`).then((r) => r.items),
+  pendingReviews: () =>
+    request<{ items: PendingReview[] }>("GET", "/reviews/pending").then((r) => r.items),
+  leaveReview: (input: { listingId: number; rating: number; dealSuccess: boolean; text?: string }) =>
+    request<{ review: Review }>("POST", "/reviews", input).then((r) => r.review),
+  deleteReview: (id: number) => request<{ ok: true }>("DELETE", `/reviews/${id}`),
+
   /** Отправить отклонённый или снятый лот на повторную проверку. */
   resubmitListing: (id: number) =>
     request<{ listing: Listing }>("POST", `/listings/${id}/resubmit`).then((r) => r.listing),
@@ -396,6 +531,9 @@ export const moderation = {
 export const admin = {
   stats: () =>
     request<{ users: number; admins: number; moderators: number; blocked: number }>("GET", "/admin/stats"),
+  overview: () => request<ProjectStats>("GET", "/admin/overview"),
+  period: (period: string) =>
+    request<{ stats: PeriodStats }>("GET", `/admin/overview/${period}`).then((r) => r.stats),
   users: (query: { q?: string; role?: string } = {}) =>
     request<{ items: StaffUser[]; roles: Role[] }>("GET", `/admin/users${qs(query)}`),
   setRole: (userId: number, role: Role) =>

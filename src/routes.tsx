@@ -2,12 +2,15 @@ import { createBrowserRouter, Outlet } from "react-router";
 import Layout from "./Layout";
 import { AuthProvider, RequireAuth, RequireRole } from "./auth";
 import { WishProvider } from "./store";
+import { CityProvider } from "./city";
 import Home from "./pages/Home";
 import Catalog from "./pages/Catalog";
 import Lot from "./pages/Lot";
 import NewLot from "./pages/NewLot";
 import Seller from "./pages/Seller";
 import Business from "./pages/Business";
+import Help from "./pages/Help";
+import About from "./pages/About";
 import Journal from "./pages/Journal";
 import Article from "./pages/Article";
 import ArticleEditor from "./pages/ArticleEditor";
@@ -21,9 +24,11 @@ import NotFound from "./pages/NotFound";
 function Providers() {
   return (
     <AuthProvider>
-      <WishProvider>
-        <Outlet />
-      </WishProvider>
+      <CityProvider>
+        <WishProvider>
+          <Outlet />
+        </WishProvider>
+      </CityProvider>
     </AuthProvider>
   );
 }
@@ -47,6 +52,8 @@ export const router = createBrowserRouter([
           { path: "lot/:id", Component: Lot },
           { path: "seller/:id", Component: Seller },
           { path: "business", Component: Business },
+          { path: "help", Component: Help },
+          { path: "about", Component: About },
           { path: "journal", Component: Journal },
           // Создание и правка — до маршрута со :slug, иначе «new» примут за адрес материала.
           {
