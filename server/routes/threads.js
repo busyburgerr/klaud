@@ -23,108 +23,107 @@ const THREAD_SELECT = `
     JOIN users b    ON b.id = t.buyer_id
     JOIN users s    ON s.id = t.seller_id`;
 
-function loadThread(id, userId) {
-  const row = get(`${THREAD_SELECT} WHERE t.id = ?`, userId, Number(id));
+async function loadThread(id, userId) {
+  const row = await get(`${THREAD_SELECT} WHERE t.id = ?`, userId, Number(id));
   if (!row) throw notFound("Диалог не найден");
   if (row.buyer_id !== userId && row.seller_id !== userId) throw forbidden("Это чужой диалог");
   return row;
 }
 
-const messagesOf = (threadId) =>
+const messagesOf = async (threadId) =>
   all("SELECT * FROM messages WHERE thread_id = ? ORDER BY created_at, id", threadId);
 
 // GET /api/threads — список диалогов с последним сообщением
-threadsRouter.get("/", (req, res) => {
-  const rows = all(
+threadsRouter.get("/", async (req, res) => {
+  const rows = await all(
     `${THREAD_SELECT} WHERE t.buyer_id = ? OR t.seller_id = ? ORDER BY t.updated_at DESC`,
     req.user.id, req.user.id, req.user.id,
   );
 
-  const items = rows.map((row) => {
-    const last = get(
+  const items = await Promise.all(rows.map(async (row) => {
+    const last = await get(
       "SELECT * FROM messages WHERE thread_id = ? ORDER BY created_at DESC, id DESC LIMIT 1",
       row.id,
     );
     return S.thread(row, req.user.id, last ? [last] : []);
-  });
+  }));
 
   res.json({ items, unread: items.reduce((sum, t) => sum + t.unread, 0) });
 });
 
 // GET /api/threads/:id — диалог целиком (и отметка сообщений прочитанными)
-threadsRouter.get("/:id", (req, res) => {
-  const row = loadThread(req.params.id, req.user.id);
-  run(
-    "UPDATE messages SET read_at = datetime('now') WHERE thread_id = ? AND sender_id != ? AND read_at IS NULL",
+threadsRouter.get("/:id", async (req, res) => {
+  const row = await loadThread(req.params.id, req.user.id);
+  await run(
+    "UPDATE messages SET read_at = now_utc() WHERE thread_id = ? AND sender_id != ? AND read_at IS NULL",
     row.id, req.user.id,
   );
-  res.json({ thread: S.thread({ ...row, unread: 0 }, req.user.id, messagesOf(row.id)) });
+  res.json({ thread: S.thread({ ...row, unread: 0 }, req.user.id, await messagesOf(row.id)) });
 });
 
 // POST /api/threads — начать переписку по лоту («Написать продавцу»)
 threadsRouter.post(
   "/",
-  wrap((req, res) => {
+  wrap(async (req, res) => {
     const body = v(req.body)
       .int("listingId", { required: true, min: 1 })
       .str("text", { max: 4000, fallback: "" })
       .done();
 
-    const listing = get("SELECT * FROM listings WHERE id = ?", body.listingId);
+    const listing = await get("SELECT * FROM listings WHERE id = ?", body.listingId);
     if (!listing) throw notFound("Лот не найден");
     if (listing.seller_id === req.user.id) throw badRequest("Нельзя написать самому себе");
 
-    const threadId = tx(() => {
-      run(
+    const threadId = await tx(async () => {
+      await run(
         `INSERT INTO threads (listing_id, buyer_id, seller_id) VALUES (?, ?, ?)
          ON CONFLICT (listing_id, buyer_id) DO NOTHING`,
         listing.id, req.user.id, listing.seller_id,
       );
-      const id = get(
+      const id = (await get(
         "SELECT id FROM threads WHERE listing_id = ? AND buyer_id = ?",
         listing.id, req.user.id,
-      ).id;
+      )).id;
 
       if (body.text) {
-        run("INSERT INTO messages (thread_id, sender_id, text) VALUES (?, ?, ?)", id, req.user.id, body.text);
-        run("UPDATE threads SET updated_at = datetime('now') WHERE id = ?", id);
+        await run("INSERT INTO messages (thread_id, sender_id, text) VALUES (?, ?, ?)", id, req.user.id, body.text);
+        await run("UPDATE threads SET updated_at = now_utc() WHERE id = ?", id);
       }
       return id;
     });
 
-    const row = loadThread(threadId, req.user.id);
-    res.status(201).json({ thread: S.thread(row, req.user.id, messagesOf(threadId)) });
+    const row = await loadThread(threadId, req.user.id);
+    res.status(201).json({ thread: S.thread(row, req.user.id, await messagesOf(threadId)) });
   }),
 );
 
 // POST /api/threads/:id/messages — отправка сообщения
 threadsRouter.post(
   "/:id/messages",
-  wrap((req, res) => {
-    const row = loadThread(req.params.id, req.user.id);
+  wrap(async (req, res) => {
+    const row = await loadThread(req.params.id, req.user.id);
     const body = v(req.body).str("text", { required: true, min: 1, max: 4000 }).done();
 
-    const messageId = tx(() => {
-      run(
-        "INSERT INTO messages (thread_id, sender_id, text) VALUES (?, ?, ?)",
+    const messageId = await tx(async () => {
+      const { id } = await get(
+        "INSERT INTO messages (thread_id, sender_id, text) VALUES (?, ?, ?) RETURNING id",
         row.id, req.user.id, body.text,
       );
-      const id = get("SELECT id FROM messages WHERE rowid = last_insert_rowid()").id;
-      run("UPDATE threads SET updated_at = datetime('now') WHERE id = ?", row.id);
+      await run("UPDATE threads SET updated_at = now_utc() WHERE id = ?", row.id);
       return id;
     });
 
-    const message = get("SELECT * FROM messages WHERE id = ?", messageId);
+    const message = await get("SELECT * FROM messages WHERE id = ?", messageId);
     res.status(201).json({ message: S.message(message, req.user.id) });
   }),
 );
 
 // GET /api/threads/:id/messages?after=<id> — опрос новых сообщений
-threadsRouter.get("/:id/messages", (req, res) => {
-  const row = loadThread(req.params.id, req.user.id);
+threadsRouter.get("/:id/messages", async (req, res) => {
+  const row = await loadThread(req.params.id, req.user.id);
   const after = Number(req.query.after) || 0;
 
-  const rows = all(
+  const rows = await all(
     "SELECT * FROM messages WHERE thread_id = ? AND id > ? ORDER BY created_at, id",
     row.id, after,
   );

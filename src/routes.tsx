@@ -8,6 +8,8 @@ import Catalog from "./pages/Catalog";
 import Lot from "./pages/Lot";
 import NewLot from "./pages/NewLot";
 import Seller from "./pages/Seller";
+import Shop from "./pages/Shop";
+import Publisher from "./pages/Publisher";
 import Business from "./pages/Business";
 import Help from "./pages/Help";
 import About from "./pages/About";
@@ -51,6 +53,8 @@ export const router = createBrowserRouter([
           { path: "category/:slug", Component: Catalog },
           { path: "lot/:id", Component: Lot },
           { path: "seller/:id", Component: Seller },
+          { path: "shop/:id", Component: Shop },
+          { path: "publisher/:id", Component: Publisher },
           { path: "business", Component: Business },
           { path: "help", Component: Help },
           { path: "about", Component: About },

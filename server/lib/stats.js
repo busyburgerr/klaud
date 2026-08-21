@@ -17,27 +17,27 @@ export const PERIODS = {
 const since = (period) => PERIODS[period]?.sql ?? null;
 
 /** Показатели за период: подано, опубликовано, продано, выручка. */
-export function periodStats(period) {
+export async function periodStats(period) {
   const window = since(period);
   const created = window
-    ? get("SELECT COUNT(*) AS c FROM listings WHERE created_at >= datetime('now', ?)", window).c
-    : get("SELECT COUNT(*) AS c FROM listings").c;
+    ? (await get("SELECT COUNT(*) AS c FROM listings WHERE created_at >= now_utc() + ?::interval", window)).c
+    : (await get("SELECT COUNT(*) AS c FROM listings")).c;
 
   const sold = window
-    ? get(
+    ? await get(
         `SELECT COUNT(*) AS c, COALESCE(SUM(price), 0) AS sum
-           FROM listings WHERE status = 'sold' AND sold_at >= datetime('now', ?)`,
+           FROM listings WHERE status = 'sold' AND sold_at >= now_utc() + ?::interval`,
         window,
       )
-    : get("SELECT COUNT(*) AS c, COALESCE(SUM(price), 0) AS sum FROM listings WHERE status = 'sold'");
+    : await get("SELECT COUNT(*) AS c, COALESCE(SUM(price), 0) AS sum FROM listings WHERE status = 'sold'");
 
   const users = window
-    ? get("SELECT COUNT(*) AS c FROM users WHERE created_at >= datetime('now', ?)", window).c
-    : get("SELECT COUNT(*) AS c FROM users").c;
+    ? (await get("SELECT COUNT(*) AS c FROM users WHERE created_at >= now_utc() + ?::interval", window)).c
+    : (await get("SELECT COUNT(*) AS c FROM users")).c;
 
   const reviews = window
-    ? get("SELECT COUNT(*) AS c FROM reviews WHERE created_at >= datetime('now', ?)", window).c
-    : get("SELECT COUNT(*) AS c FROM reviews").c;
+    ? (await get("SELECT COUNT(*) AS c FROM reviews WHERE created_at >= now_utc() + ?::interval", window)).c
+    : (await get("SELECT COUNT(*) AS c FROM reviews")).c;
 
   return {
     period,
@@ -51,8 +51,8 @@ export function periodStats(period) {
 }
 
 /** Полная сводка для панели администратора. */
-export function projectStats() {
-  const listings = get(`
+export async function projectStats() {
+  const listings = await get(`
     SELECT COUNT(*) AS total,
            SUM(CASE WHEN status = 'active'   THEN 1 ELSE 0 END) AS active,
            SUM(CASE WHEN status = 'pending'  THEN 1 ELSE 0 END) AS pending,
@@ -62,19 +62,20 @@ export function projectStats() {
            COALESCE(SUM(views), 0) AS views
       FROM listings`);
 
-  const sold = get(
+  // Срок сделки в днях: разница меток времени в Postgres — интервал.
+  const sold = await get(
     `SELECT COALESCE(SUM(price), 0) AS revenue,
             COALESCE(AVG(price), 0) AS average,
-            COALESCE(AVG(julianday(sold_at) - julianday(created_at)), 0) AS days
+            COALESCE(AVG(EXTRACT(EPOCH FROM (sold_at - created_at)) / 86400), 0) AS days
        FROM listings WHERE status = 'sold'`,
   );
 
-  const users = get(`
+  const users = await get(`
     SELECT COUNT(*) AS total,
            SUM(CASE WHEN role = 'moderator' THEN 1 ELSE 0 END) AS moderators,
            SUM(CASE WHEN role = 'admin'     THEN 1 ELSE 0 END) AS admins,
            SUM(CASE WHEN blocked_at IS NOT NULL THEN 1 ELSE 0 END) AS blocked,
-           SUM(CASE WHEN email IS NOT NULL THEN 1 ELSE 0 END) AS withEmail
+           SUM(CASE WHEN email IS NOT NULL THEN 1 ELSE 0 END) AS "withEmail"
       FROM users`);
 
   return {
@@ -101,34 +102,37 @@ export function projectStats() {
       admins: users.admins ?? 0,
       blocked: users.blocked ?? 0,
       withEmail: users.withEmail ?? 0,
-      sellers: get("SELECT COUNT(DISTINCT seller_id) AS c FROM listings").c,
+      sellers: (await get("SELECT COUNT(DISTINCT seller_id) AS c FROM listings")).c,
     },
     content: {
-      articles: get("SELECT COUNT(*) AS c FROM articles WHERE status = 'published'").c,
-      drafts: get("SELECT COUNT(*) AS c FROM articles WHERE status = 'draft'").c,
-      reviews: get("SELECT COUNT(*) AS c FROM reviews").c,
-      openReports: get("SELECT COUNT(*) AS c FROM reports WHERE status = 'open'").c,
-      messages: get("SELECT COUNT(*) AS c FROM messages").c,
+      articles: (await get("SELECT COUNT(*) AS c FROM articles WHERE status = 'published'")).c,
+      drafts: (await get("SELECT COUNT(*) AS c FROM articles WHERE status = 'draft'")).c,
+      reviews: (await get("SELECT COUNT(*) AS c FROM reviews")).c,
+      openReports: (await get("SELECT COUNT(*) AS c FROM reports WHERE status = 'open'")).c,
+      messages: (await get("SELECT COUNT(*) AS c FROM messages")).c,
     },
-    periods: Object.keys(PERIODS).map(periodStats),
+    periods: await Promise.all(Object.keys(PERIODS).map(periodStats)),
   };
 }
 
 /** Помесячная динамика за последние N месяцев — для графика в панели. */
-export function monthlyTrend(months = 12) {
+export async function monthlyTrend(months = 12) {
   return all(
-    `WITH RECURSIVE m(offset) AS (
-       SELECT 0 UNION ALL SELECT offset + 1 FROM m WHERE offset < ?
+    `WITH m AS (
+       SELECT generate_series(
+                date_trunc('month', now_utc()) - ?::int * interval '1 month',
+                date_trunc('month', now_utc()),
+                interval '1 month') AS month
      )
-     SELECT strftime('%Y-%m', datetime('now', '-' || offset || ' months')) AS month,
+     SELECT to_char(m.month, 'YYYY-MM') AS month,
             (SELECT COUNT(*) FROM listings
-              WHERE strftime('%Y-%m', created_at) = strftime('%Y-%m', datetime('now', '-' || offset || ' months'))) AS created,
+              WHERE date_trunc('month', created_at) = m.month) AS created,
             (SELECT COUNT(*) FROM listings
               WHERE status = 'sold'
-                AND strftime('%Y-%m', sold_at) = strftime('%Y-%m', datetime('now', '-' || offset || ' months'))) AS sold,
+                AND date_trunc('month', sold_at) = m.month) AS sold,
             (SELECT COALESCE(SUM(price), 0) FROM listings
               WHERE status = 'sold'
-                AND strftime('%Y-%m', sold_at) = strftime('%Y-%m', datetime('now', '-' || offset || ' months'))) AS revenue
+                AND date_trunc('month', sold_at) = m.month) AS revenue
        FROM m
       ORDER BY month`,
     months - 1,
@@ -139,16 +143,16 @@ export function monthlyTrend(months = 12) {
  * Витринные показатели для страницы «Для бизнеса» и бегущей строки.
  * Раньше эти числа были зашиты в вёрстку — теперь считаются по базе.
  */
-export function publicMetrics() {
-  const activeListings = get("SELECT COUNT(*) AS c FROM listings WHERE status = 'active'").c;
-  const sellers = get(
+export async function publicMetrics() {
+  const activeListings = (await get("SELECT COUNT(*) AS c FROM listings WHERE status = 'active'")).c;
+  const sellers = (await get(
     "SELECT COUNT(DISTINCT seller_id) AS c FROM listings WHERE status IN ('active', 'sold')",
-  ).c;
-  const cities = get(
+  )).c;
+  const cities = (await get(
     "SELECT COUNT(DISTINCT location) AS c FROM listings WHERE status IN ('active', 'sold')",
-  ).c;
-  const soldDays = get(
-    `SELECT COALESCE(AVG(julianday(sold_at) - julianday(created_at)), 0) AS days,
+  )).c;
+  const soldDays = await get(
+    `SELECT COALESCE(AVG(EXTRACT(EPOCH FROM (sold_at - created_at)) / 86400), 0) AS days,
             COUNT(*) AS c
        FROM listings WHERE status = 'sold'`,
   );
@@ -162,17 +166,16 @@ export function publicMetrics() {
         ? `${Math.max(1, Math.round(avgDays * 24))} ч`
         : `${Math.round(avgDays)} дн`;
 
+  const rating = await get("SELECT COALESCE(AVG(rating), 0) AS avg, COUNT(*) AS c FROM reviews");
+
   return {
     activeListings,
     sellers,
-    buyers: get("SELECT COUNT(*) AS c FROM users").c,
+    buyers: (await get("SELECT COUNT(*) AS c FROM users")).c,
     cities,
-    sold: get("SELECT COUNT(*) AS c FROM listings WHERE status = 'sold'").c,
+    sold: (await get("SELECT COUNT(*) AS c FROM listings WHERE status = 'sold'")).c,
     sellTime,
-    reviews: get("SELECT COUNT(*) AS c FROM reviews").c,
-    rating: (() => {
-      const r = get("SELECT COALESCE(AVG(rating), 0) AS avg, COUNT(*) AS c FROM reviews");
-      return r.c ? (Math.round(r.avg * 10) / 10).toFixed(1) : null;
-    })(),
+    reviews: (await get("SELECT COUNT(*) AS c FROM reviews")).c,
+    rating: rating.c ? (Math.round(rating.avg * 10) / 10).toFixed(1) : null,
   };
 }

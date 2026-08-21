@@ -4,14 +4,16 @@ import os from "node:os";
 import path from "node:path";
 import { after, before, describe, it } from "node:test";
 
-const tmpDb = path.join(os.tmpdir(), `cloud-moderation-${process.pid}.db`);
-process.env.DB_FILE = tmpDb;
+// Изолированная схема в тестовой базе — до импорта модулей, читающих config.
+process.env.DATABASE_URL = process.env.TEST_DATABASE_URL
+  || "postgres://cloud:cloud@127.0.0.1:5432/cloud_test";
+process.env.DB_SCHEMA = "test_moderation";
 process.env.JWT_SECRET = "test-secret";
 process.env.UPLOADS_DIR = path.join(os.tmpdir(), `cloud-moderation-uploads-${process.pid}`);
 process.env.RATE_LIMIT = "off";
 
 const { createApp } = await import("../app.js");
-const { close } = await import("../db/index.js");
+const { close, exec } = await import("../db/index.js");
 const { seed, DEMO_PASSWORD } = await import("../db/seed.js");
 
 let server;
@@ -56,7 +58,9 @@ async function createPending(token, title = "Лот для модерации") 
 }
 
 before(async () => {
-  seed({ force: true });
+  // Каждый прогон начинается с пустой схемы.
+  await exec(`DROP SCHEMA IF EXISTS "${process.env.DB_SCHEMA}" CASCADE`);
+  await seed({ force: true });
   server = createApp().listen(0);
   await new Promise((resolve) => server.once("listening", resolve));
   base = `http://127.0.0.1:${server.address().port}`;
@@ -64,8 +68,8 @@ before(async () => {
 
 after(async () => {
   await new Promise((resolve) => server.close(resolve));
-  close();
-  for (const f of [tmpDb, `${tmpDb}-wal`, `${tmpDb}-shm`]) fs.rmSync(f, { force: true });
+  await exec(`DROP SCHEMA IF EXISTS "${process.env.DB_SCHEMA}" CASCADE`);
+  await close();
   fs.rmSync(process.env.UPLOADS_DIR, { recursive: true, force: true });
 });
 

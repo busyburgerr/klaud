@@ -1,44 +1,45 @@
-# figma-make-app
+# «Клауд» (figma-make-app)
 
-React + Vite + Tailwind CSS project running inside Figma Make.
+Каталог частных объявлений: React + Vite + Tailwind CSS внутри Figma Make,
+собственный бэкенд на Express и PostgreSQL.
 
-## Development Server
+## Сервер разработки
 
-A Vite development server is **already running** on `$PORT` (default 8443). You don't need to start it manually.
+Сервер Vite **уже запущен** на `$PORT` (по умолчанию 8443). Вручную его поднимать не нужно.
 
-- Preview URL: The user can access the running app through the preview panel
-- Hot reload: Changes to source files are reflected immediately
+- Просмотр: приложение открывается через панель предпросмотра
+- Горячая перезагрузка: правки исходников видны сразу
 
-## Project Structure
+## Структура проекта
 
-This is the canonical project structure. Start with task-relevant files below. Only follow imports or inspect other files when required, when a documented path is missing, or when the repository contradicts this guide.
+Это основная карта проекта. Начинайте с файлов, относящихся к задаче. Переходить по импортам и заглядывать в остальные файлы стоит только по необходимости: когда описанного пути нет на месте или когда репозиторий расходится с этим описанием.
 
-- `src/main.tsx` - React entrypoint; imports `src/index.css` and mounts `src/App.tsx` into the `#root` element
-- `src/App.tsx` - Primary application component and the usual starting point for UI work
-- `src/index.css` - Global CSS entrypoint and Tailwind CSS v4 import
-- `index.html` - Vite HTML shell containing the `#root` element and loading `src/main.tsx`
-- `package.json` - Project dependencies and the Vite build, development, preview, and formatting scripts
-- `vite.config.ts` - Vite configuration with React, Tailwind CSS v4, and Figma Make plugins plus the `@` alias for `src`
-- `.mise.toml` - Toolchain versions for Node.js and pnpm
+- `src/main.tsx` — точка входа React: подключает `src/index.css` и монтирует `src/App.tsx` в элемент `#root`
+- `src/App.tsx` — главный компонент приложения и обычная отправная точка для работы над интерфейсом
+- `src/index.css` — общий CSS и импорт Tailwind CSS v4
+- `index.html` — HTML-оболочка Vite с элементом `#root`, загружает `src/main.tsx`
+- `package.json` — зависимости и команды Vite: сборка, разработка, предпросмотр, форматирование
+- `vite.config.ts` — настройки Vite: React, Tailwind CSS v4, плагины Figma Make и алиас `@` для `src`
+- `.mise.toml` — версии Node.js и pnpm
 
-## Dependencies
+## Зависимости
 
-- Runtime: React 19 and React DOM 19
-- Styling: Tailwind CSS v4 with the `@tailwindcss/vite` plugin
-- Build tooling: Vite 8, TypeScript 5.7, and `@vitejs/plugin-react`
-- Formatting: oxfmt
+- Рантайм: React 19 и React DOM 19
+- Стили: Tailwind CSS v4 с плагином `@tailwindcss/vite`
+- Сборка: Vite 8, TypeScript 5.7 и `@vitejs/plugin-react`
+- Форматирование: oxfmt
 
-## Styling
+## Стили
 
-This project uses **Tailwind CSS v4** through the `@tailwindcss/vite` plugin configured in `vite.config.ts`. `src/index.css` imports Tailwind with `@import 'tailwindcss';`. Use Tailwind utility classes directly in JSX and put global CSS or Tailwind v4 theme customization in `src/index.css`. This scaffold does not need a Tailwind config file or PostCSS config.
+Проект использует **Tailwind CSS v4** через плагин `@tailwindcss/vite`, настроенный в `vite.config.ts`. `src/index.css` подключает Tailwind строкой `@import 'tailwindcss';`. Классы Tailwind пишутся прямо в JSX, а глобальный CSS и настройка темы Tailwind v4 живут в `src/index.css`. Отдельные файлы конфигурации Tailwind и PostCSS этой сборке не нужны.
 
-`src/main.tsx` imports `src/index.css`, so global font wiring belongs in `src/index.css`. Keep CSS `@import` statements first, then add any `@font-face` rules and font-family defaults there.
+`src/main.tsx` импортирует `src/index.css`, поэтому подключение шрифтов тоже относится к `src/index.css`. Директивы `@import` держите первыми, а `@font-face` и семейства шрифтов по умолчанию добавляйте после них.
 
-## Code quality
+## Качество кода
 
-- Use double quotes for strings containing apostrophes (`"We're here to help"`), or escape them in single-quoted strings. An unescaped apostrophe in a single-quoted string breaks the build.
-- Ensure JSX tags are closed and braces are balanced.
-- Export components as default exports.
+- Строки с апострофом заключайте в двойные кавычки (`"We're here to help"`) либо экранируйте апостроф внутри одинарных. Неэкранированный апостроф в строке с одинарными кавычками ломает сборку.
+- Следите за закрытыми JSX-тегами и парными скобками.
+- Компоненты экспортируйте по умолчанию (`export default`).
 
 ## Архитектура
 
@@ -54,10 +55,57 @@ This project uses **Tailwind CSS v4** through the `@tailwindcss/vite` plugin con
 - `src/routes.tsx` — маршруты; `/account`, `/messages`, `/new` обёрнуты в `RequireAuth`,
   `/moderation` — в `RequireRole` (роль не ниже `moderator`)
 - `src/components.tsx` — карточка лота, сетка со скелетонами, пустые состояния
+- `src/search.ts` — разбор номера лота («0442», «442», «Лот 442», «№442») и выбор
+  цели поиска: точный номер открывает карточку, остальное уходит в каталог
 
 Гость на закрытой странице уходит на `/login?next=<путь>` и после входа
 возвращается обратно. Сердечко у гостя ведёт туда же. Пользователь без прав
 модератора на `/moderation` перенаправляется на главную.
+
+### Тарифы и витрина
+
+`shelf` («Полка») → `storefront` («Витрина») → `edition` («Издание»). Тариф
+показывается рядом с городом в личном кабинете; справочник возможностей —
+`server/lib/plans.js` и `GET /api/plans`.
+
+- **Полка** — то, как площадка работала всегда: обычная страница продавца.
+- **Витрина** — оформленный магазин: обложка, бренд, слоган, блок «О магазине»,
+  условия работы и до трёх ссылок на соцсети.
+- **Издание** — то же плюс разделы витрины (до шести) и до шести ссылок.
+
+Настройка — вкладка «Витрина» личного кабинета (`src/StorefrontEditor.tsx`),
+публичная страница — `/shop/:slug` (`src/pages/Shop.tsx`). Обложка бренда общая
+для предпросмотра и публичной страницы: `src/ShopCover.tsx`. `/seller/:slug`
+у продавца с активным тарифом перенаправляет на витрину; `?plain=1` открывает
+обычный профиль.
+
+Оплата не подключена: тариф и срок назначает администратор на `/moderation`
+во вкладке «Пользователи». Когда срок истекает, витрина скрывается, а
+оформление сохраняется — после продления всё возвращается.
+
+### Издательский дом («Издание»)
+
+Владелец тарифа «Издание» ведёт издательский дом: несколько витрин под одной
+обложкой и собственную полосу на главной.
+
+- `/publisher/:slug` (`src/pages/Publisher.tsx`) — страница дома: обложка,
+  «Витрины под обложкой» и подборка «Выбор издания».
+- Вкладка «Издательский кабинет» видна только владельцу
+  (`src/PublisherCabinet.tsx`): показатели витрин, график откликов за две
+  недели, сборка полосы и массовая загрузка каталога таблицей CSV.
+- Полоса на главной — верхний блок `src/pages/Home.tsx`, данные из
+  `GET /api/publishers/featured`: показывается издание, которое последним
+  обновляло подборку.
+
+Витрины набирает сам издатель: в кабинете есть блок «Витрины под обложкой» —
+приглашение по адресу витрины или телефону владельца, отзыв приглашения и
+удаление магазина из дома. **Витрина входит в издание только с согласия своего
+владельца:** приглашение он видит во вкладке «Витрина» личного кабинета и может
+принять, отклонить или потом выйти из издания. Администратор по-прежнему может
+включить витрину напрямую (`PATCH /api/admin/users/:id/publisher`) и закрепляет
+личного редактора из персонала (`.../editor`).
+
+Загруженные таблицей лоты попадают в обычную очередь модерации.
 
 ### Роли и модерация
 
@@ -70,17 +118,26 @@ This project uses **Tailwind CSS v4** through the `@tailwindcss/vite` plugin con
 только редакция. Материал собирается из блоков (абзац, подзаголовок, список,
 шаги, врезка); вёрстка блоков — `src/ArticleBody.tsx`, она же в предпросмотре. Подробности и список маршрутов — в `server/README.md`.
 
-## Backend (server/)
+## Бэкенд (`server/`)
 
-REST API на Express 5 + SQLite (`node:sqlite`, без нативных зависимостей). База —
-`data/cloud.db`, документация и список маршрутов — в `server/README.md`.
+REST API на Express 5 + PostgreSQL (драйвер `pg`). Схема — `server/db/schema.sql`,
+документация и список маршрутов — в `server/README.md`.
 
 ### Разработка
 
 ```bash
-pnpm run api      # API на :3001
-pnpm run dev      # фронтенд на :8443 (проксирует /api и /uploads)
+docker compose up -d   # Postgres 17 + база cloud_test для автотестов
+pnpm run api           # API на :3001
+pnpm run dev           # фронтенд на :8443 (проксирует /api и /uploads)
 ```
+
+Подключение — `DATABASE_URL`; без него берётся
+`postgres://cloud:cloud@127.0.0.1:5432/cloud`, то есть то, что поднимает
+`docker compose`.
+
+Слой доступа к данным — `server/db/index.js`: `get`/`all`/`run`/`tx`
+асинхронные, плейсхолдеры пишутся как `?` и нумеруются автоматически,
+транзакция подхватывается вложенными вызовами через `AsyncLocalStorage`.
 
 ### Продакшен
 
@@ -90,12 +147,18 @@ NODE_ENV=production JWT_SECRET=<секрет> pnpm start
 ```
 
 Один процесс отдаёт API и собранный `dist/` с SPA-fallback. Без `JWT_SECRET`
-запуск в проде прерывается.
+запуск в проде прерывается. Переменные удобнее держать в `.env` рядом с
+`package.json` (шаблон — `.env.example`), его подхватывают `pnpm run api` и
+`pnpm start`.
+
+Развёртывание на VPS (Node + systemd + nginx + HTTPS), обновление и бэкапы —
+`deploy/README.md`; там же готовые `cloud.service`, `nginx.conf`, `update.sh`
+и `backup.sh`.
 
 ### Прочие команды
 
 - `pnpm run api:seed -- --force` — пересоздать демо-данные
-- `pnpm run api:reset` — очистить базу до категорий и аккаунтов персонала
+- `pnpm run api:reset` — очистить базу до справочников и аккаунта администратора
 - `pnpm run api:catalog` — наполнить каталог лотами во всех разделах
 - `pnpm run api:test` — тесты API на `node:test`
 - `pnpm run typecheck` — проверка типов

@@ -1,8 +1,9 @@
 import path from "node:path";
 import bcrypt from "bcryptjs";
 import { displayPhone } from "../lib/format.js";
-import { all, db, get, migrate, run, tx } from "./index.js";
+import { all, close, exec, get, migrate, run, tx } from "./index.js";
 import { CITIES } from "./cities.js";
+import { giveShop } from "./shops-demo.js";
 import { MILESTONES, PRINCIPLES } from "./about-content.js";
 import { FAQ, HELP_TOPICS } from "./help-content.js";
 import { ARTICLES, CATEGORIES, LISTINGS, SELLERS } from "./seed-data.js";
@@ -104,19 +105,18 @@ function describe(item, cat) {
   );
 }
 
-export function isSeeded() {
-  return (get("SELECT COUNT(*) AS c FROM users")?.c ?? 0) > 0;
+export async function isSeeded() {
+  return ((await get("SELECT COUNT(*) AS c FROM users"))?.c ?? 0) > 0;
 }
 
-export function reset() {
-  for (const t of [
-    "moderation_log", "reports", "reviews", "messages", "threads", "favorites",
-    "listing_images", "listings", "articles", "categories", "cities",
-    "help_topics", "faq", "about_blocks", "users",
-  ]) {
-    db.exec(`DELETE FROM ${t}`);
-  }
-  db.exec("DELETE FROM sqlite_sequence");
+export async function reset() {
+  // TRUNCATE ... RESTART IDENTITY сразу чистит связанные таблицы и обнуляет
+  // счётчики id, поэтому демо-данные всегда получают одни и те же номера.
+  await exec(`TRUNCATE TABLE
+    moderation_log, reports, reviews, messages, threads, favorites,
+    listing_images, listings, articles, categories, cities,
+    help_topics, faq, about_blocks, users
+    RESTART IDENTITY CASCADE`);
 }
 
 /**
@@ -124,90 +124,115 @@ export function reset() {
  * учётные записи персонала — с таким состоянием площадку можно открывать
  * для настоящих пользователей.
  */
-export function seed({ force = false, demo = true } = {}) {
-  migrate();
+export async function seed({ force = false, demo = true } = {}) {
+  await migrate();
 
-  if (isSeeded() && !force) {
+  if ((await isSeeded()) && !force) {
     return { skipped: true };
   }
-  if (force) reset();
+  if (force) await reset();
 
   const now = Date.now();
   const hash = bcrypt.hashSync(DEMO_PASSWORD, 10);
 
-  tx(() => {
+  await tx(async () => {
     // ── Категории ──
-    CATEGORIES.forEach((c, i) => {
-      run(
+    for (const [i, c] of CATEGORIES.entries()) {
+      await run(
         `INSERT INTO categories (slug, n, label, blurb, img, display_count, position)
          VALUES (?, ?, ?, ?, ?, ?, ?)`,
         // Витринные счётчики из макета нужны только демо-каталогу:
         // на рабочей базе показываем настоящее число лотов.
         c.slug, c.n, c.label, c.blurb, c.img, demo ? parsePrice(c.count) : 0, i,
       );
-    });
+    }
 
     // ── Города ──
-    CITIES.forEach((c, i) => {
-      run(
+    for (const [i, c] of CITIES.entries()) {
+      await run(
         "INSERT INTO cities (slug, name, region, position) VALUES (?, ?, ?, ?)",
         c.slug, c.name, c.region, i,
       );
-    });
+    }
 
     // ── Пользователи ──
     const userIdBySlug = new Map();
 
-    const insertUser = (u, createdAt) => {
-      run(
+    const insertUser = async (u, createdAt) => {
+      await run(
         `INSERT INTO users (slug, name, phone, password_hash, city, type, bio, rating, deals, role, last_seen_at, created_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         u.slug, u.name, u.phone, hash, u.city, u.type, u.bio,
         Number(u.rating), u.deals, u.role ?? "user", iso(now), createdAt,
       );
-      userIdBySlug.set(u.slug, get("SELECT id FROM users WHERE slug = ?", u.slug).id);
+      userIdBySlug.set(u.slug, (await get("SELECT id FROM users WHERE slug = ?", u.slug)).id);
     };
 
-    for (const staff of STAFF) insertUser(staff, `${staff.since}-01-09 08:00:00`);
+    // На чистой базе остаётся один администратор: остальные аккаунты, включая
+    // модератора, заводятся уже на живой площадке. Прав администратора хватает
+    // и для модерации — роли идут по возрастанию.
+    const staffToCreate = demo ? STAFF : STAFF.filter((s) => s.role === "admin");
+    for (const staff of staffToCreate) await insertUser(staff, `${staff.since}-01-09 08:00:00`);
     // ── Справка ──
-    HELP_TOPICS.forEach((t, i) => {
-      run(
+    for (const [i, t] of HELP_TOPICS.entries()) {
+      await run(
         "INSERT INTO help_topics (slug, n, title, blurb, position) VALUES (?, ?, ?, ?, ?)",
         t.slug, t.n, t.title, t.blurb, i,
       );
-    });
-    FAQ.forEach((q, i) => {
-      run(
+    }
+    for (const [i, q] of FAQ.entries()) {
+      await run(
         "INSERT INTO faq (category, question, answer, position) VALUES (?, ?, ?, ?)",
         q.category, q.question, q.answer, i,
       );
-    });
+    }
 
     // ── О проекте ──
-    PRINCIPLES.forEach((p, i) => {
-      run(
+    for (const [i, p] of PRINCIPLES.entries()) {
+      await run(
         "INSERT INTO about_blocks (kind, label, title, text, position) VALUES ('principle', ?, ?, ?, ?)",
         p.n, p.title, p.text, i,
       );
-    });
-    MILESTONES.forEach((m, i) => {
-      run(
+    }
+    for (const [i, m] of MILESTONES.entries()) {
+      await run(
         "INSERT INTO about_blocks (kind, label, title, text, position) VALUES ('milestone', ?, ?, ?, ?)",
         m.period, m.title, m.text, i,
       );
-    });
+    }
 
     if (!demo) return;
 
-    insertUser(DEMO_USER, `${DEMO_USER.since}-03-12 09:20:00`);
-    SELLERS.forEach((s, i) => {
-      insertUser(
+    await insertUser(DEMO_USER, `${DEMO_USER.since}-03-12 09:20:00`);
+    for (const [i, s] of SELLERS.entries()) {
+      await insertUser(
         { ...s, slug: s.id, phone: DEMO_PHONES[s.id] ?? `90011100${String(i + 4).padStart(2, "0")}` },
         `${s.since}-06-01 12:00:00`,
       );
-    });
+    }
 
     const demoId = userIdBySlug.get(DEMO_USER.slug);
+
+    // Демо-аккаунт живёт на тарифе «Витрина» — чтобы личный кабинет сразу
+    // показывал оформленный магазин.
+    await giveShop(demoId, {
+      plan: "storefront",
+      months: 12,
+      shop: {
+        brand: "Соколова · Винтаж",
+        tagline: "Редкие вещи и находки с историей — лично отобрано и проверено.",
+        cover: "https://images.unsplash.com/photo-1441984904996-e0b6ba687e04?w=1400&h=560&fit=crop&auto=format",
+        about: "Собираю и продаю вещи с историей: одежду, аксессуары и предметы интерьера. "
+          + "Каждый лот проверяю сама и фотографирую при дневном свете — в описании то, что есть на самом деле.",
+        hours: "Ежедневно · 11:00–21:00",
+        delivery: "Курьер и Почта по РФ",
+        warranty: "Проверка и возврат 7 дней",
+      },
+      links: [
+        { network: "Telegram", handle: "@sokolova_vintage", url: "https://t.me/sokolova_vintage" },
+        { network: "Threads", handle: "@sokolova.vintage", url: "https://www.threads.net/@sokolova.vintage" },
+      ],
+    });
     const sellerIdFor = (listingId) =>
       DEMO_USER_LISTINGS.has(listingId)
         ? demoId
@@ -218,18 +243,24 @@ export function seed({ force = false, demo = true } = {}) {
 
     for (const item of LISTINGS) {
       const createdAt = ageToTimestamp(item.time, now);
-      run(
+      await run(
         `INSERT INTO listings (id, lot, title, price, location, cond, description, cat, seller_id, badge, status, views, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?)`,
         item.id, item.lot, item.title, parsePrice(item.price), item.location, item.cond,
         describe(item, labelBySlug.get(item.cat) ?? item.cat), item.cat,
         sellerIdFor(item.id), item.badge, 40 + ((item.id * 37) % 400), createdAt, createdAt,
       );
-      run(
+      await run(
         "INSERT INTO listing_images (listing_id, url, position) VALUES (?, ?, 0)",
         item.id, item.img,
       );
     }
+
+    // Демо-лоты вставлены с явными id, счётчик последовательности об этом не
+    // знает — двигаем его вручную, иначе следующий INSERT упрётся в занятый id.
+    await exec(
+      "SELECT setval(pg_get_serial_sequence('listings', 'id'), (SELECT MAX(id) FROM listings))",
+    );
 
     // ── Очередь модерации ──
     // Пара лотов на проверке и один отклонённый, чтобы панель модератора
@@ -260,7 +291,7 @@ export function seed({ force = false, demo = true } = {}) {
 
     for (const item of pendingSeed) {
       const createdAt = iso(now - 90 * 60_000);
-      run(
+      await run(
         `INSERT INTO listings (lot, title, price, location, cond, description, cat, seller_id, status, reject_reason, moderated_by, moderated_at, views, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)`,
         item.lot, item.title, item.price, item.location, item.cond, item.description,
@@ -268,11 +299,11 @@ export function seed({ force = false, demo = true } = {}) {
         item.rejectReason ? moderatorId : null, item.rejectReason ? iso(now - 40 * 60_000) : null,
         createdAt, createdAt,
       );
-      const created = get("SELECT id FROM listings WHERE lot = ?", item.lot).id;
-      run("INSERT INTO listing_images (listing_id, url, position) VALUES (?, ?, 0)", created, item.img);
+      const created = (await get("SELECT id FROM listings WHERE lot = ?", item.lot)).id;
+      await run("INSERT INTO listing_images (listing_id, url, position) VALUES (?, ?, 0)", created, item.img);
 
       if (item.rejectReason) {
-        run(
+        await run(
           `INSERT INTO moderation_log (actor_id, action, target_type, target_id, reason, created_at)
            VALUES (?, 'listing.reject', 'listing', ?, ?, ?)`,
           moderatorId, created, item.rejectReason, iso(now - 40 * 60_000),
@@ -281,7 +312,7 @@ export function seed({ force = false, demo = true } = {}) {
     }
 
     // Открытая жалоба на опубликованный лот.
-    run(
+    await run(
       `INSERT INTO reports (listing_id, reporter_id, reason, comment, created_at)
        VALUES (?, ?, ?, ?, ?)`,
       4, userIdBySlug.get("artem-v"), "Подозрение на мошенничество",
@@ -290,7 +321,7 @@ export function seed({ force = false, demo = true } = {}) {
 
     // ── Журнал ──
     for (const a of ARTICLES) {
-      run(
+      await run(
         `INSERT INTO articles (slug, rubric, title, excerpt, author, date, read, img, body, published_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         a.slug, a.rubric, a.title, a.excerpt, a.author, a.date, a.read, a.img,
@@ -300,7 +331,7 @@ export function seed({ force = false, demo = true } = {}) {
 
     // ── Избранное демо-аккаунта ──
     for (const listingId of [2, 8, 11]) {
-      run("INSERT INTO favorites (user_id, listing_id) VALUES (?, ?)", demoId, listingId);
+      await run("INSERT INTO favorites (user_id, listing_id) VALUES (?, ?)", demoId, listingId);
     }
 
     // ── Диалоги ──
@@ -335,23 +366,23 @@ export function seed({ force = false, demo = true } = {}) {
     ];
 
     for (const conv of conversations) {
-      const listing = get("SELECT seller_id FROM listings WHERE id = ?", conv.listingId);
+      const listing = await get("SELECT seller_id FROM listings WHERE id = ?", conv.listingId);
       const buyerId = userIdBySlug.get(conv.buyer);
       const sellerId = listing.seller_id;
       const last = conv.messages[conv.messages.length - 1];
 
-      run(
+      await run(
         `INSERT INTO threads (listing_id, buyer_id, seller_id, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?)`,
         conv.listingId, buyerId, sellerId, minutes(conv.messages[0].at), minutes(last.at),
       );
-      const threadId = get(
+      const threadId = (await get(
         "SELECT id FROM threads WHERE listing_id = ? AND buyer_id = ?",
         conv.listingId, buyerId,
-      ).id;
+      )).id;
 
       for (const m of conv.messages) {
-        run(
+        await run(
           "INSERT INTO messages (thread_id, sender_id, text, read_at, created_at) VALUES (?, ?, ?, ?, ?)",
           threadId, m.from === "buyer" ? buyerId : sellerId, m.text, minutes(m.at - 1), minutes(m.at),
         );
@@ -362,8 +393,8 @@ export function seed({ force = false, demo = true } = {}) {
   return {
     skipped: false,
     demo,
-    users: all("SELECT slug FROM users").map((u) => u.slug),
-    listings: get("SELECT COUNT(*) AS c FROM listings").c,
+    users: (await all("SELECT slug FROM users")).map((u) => u.slug),
+    listings: (await get("SELECT COUNT(*) AS c FROM listings")).c,
     password: DEMO_PASSWORD,
   };
 }
@@ -374,7 +405,7 @@ export function seed({ force = false, demo = true } = {}) {
 //   node server/db/seed.js --clean    — очистить всё, кроме категорий и персонала
 if (process.argv[1] && import.meta.filename === path.resolve(process.argv[1])) {
   const clean = process.argv.includes("--clean");
-  const result = seed({ force: clean || process.argv.includes("--force"), demo: !clean });
+  const result = await seed({ force: clean || process.argv.includes("--force"), demo: !clean });
 
   if (result.skipped) {
     console.log("База уже заполнена. Пересоздать: pnpm run api:seed -- --force");
@@ -383,10 +414,11 @@ if (process.argv[1] && import.meta.filename === path.resolve(process.argv[1])) {
     console.log(`Готово: ${result.users.length} пользователей, ${result.listings} лотов.`);
     console.log(`Демо-вход: +7 900 128-45-09 / ${result.password}`);
   } else {
-    console.log("База очищена. Остались только категории и аккаунты персонала:");
-    for (const staff of STAFF) {
+    console.log("База очищена. Остались только справочники и аккаунт администратора:");
+    for (const staff of STAFF.filter((s) => s.role === "admin")) {
       console.log(`  ${displayPhone(staff.phone)} — ${staff.name} (${staff.role})`);
     }
     console.log(`Пароль: ${result.password} — смените его после первого входа.`);
   }
+  await close();
 }

@@ -35,6 +35,127 @@ export type Listing = {
 
 export type Role = "user" | "moderator" | "admin";
 
+export type PlanKey = "shelf" | "storefront" | "edition";
+
+/** Тариф продавца в том виде, в каком его показывает интерфейс. */
+export type PlanBadge = {
+  key: PlanKey;
+  label: string;
+  /** Доступна ли оформленная витрина. */
+  storefront: boolean;
+  until: string | null;
+  /** Тариф выбран, но срок вышел — площадка вернула «Полку». */
+  expired: boolean;
+};
+
+/** Описание тарифа из справочника /api/plans. */
+export type Plan = {
+  key: PlanKey;
+  label: string;
+  blurb: string;
+  storefront: boolean;
+  /** Издательский дом: витрины под обложкой и полоса на главной. */
+  publisher: boolean;
+  maxLinks: number;
+  maxSections: number;
+  maxPicks: number;
+  /** Сколько чужих витрин помещается под обложкой издания. */
+  maxShops: number;
+  features: string[];
+};
+
+export type ShopLink = { id?: number; network: string; handle: string; url: string };
+export type ShopSection = { id?: number; title: string; blurb: string; cat: string | null };
+
+/** Оформление магазина продавца. */
+export type Storefront = {
+  brand: string;
+  tagline: string;
+  cover: string;
+  about: string;
+  conditions: { hours: string; delivery: string; warranty: string };
+  links: ShopLink[];
+  sections: ShopSection[];
+  updatedAt: string | null;
+};
+
+/** Витрина под обложкой издательского дома. */
+export type PublisherShop = {
+  id: string;
+  name: string;
+  brand: string;
+  city: string;
+  lots: number;
+  views: number;
+  owner: boolean;
+};
+
+/** Обложка издательского дома — берётся из витрины владельца. */
+export type PublisherCard = Seller & {
+  brand: string;
+  tagline: string;
+  cover: string;
+  about: string;
+};
+
+/** Публичная страница издания. */
+export type Publisher = {
+  publisher: PublisherCard;
+  shops: PublisherShop[];
+  picks: Listing[];
+  stats: { shops: number; lots: number; views: number; since: string };
+};
+
+/** Полоса издателя на главной. */
+export type PublisherStrip = {
+  publisher: (PublisherCard & { shops: number }) | null;
+  items: Listing[];
+};
+
+/** Кабинет издателя: показатели, витрины и подборка. */
+export type PublisherCabinet = {
+  publisher: PublisherCard;
+  plan: Plan;
+  shops: PublisherShop[];
+  picks: Listing[];
+  candidates: Listing[];
+  invites: PublisherInvite[];
+  metrics: { views: number; responses: number; conversion: number; lots: number };
+  trend: { day: string; responses: number; lots: number }[];
+  editor: { name: string; initial: string; role: string; bio: string; phone: string } | null;
+};
+
+/** Витрина, приглашённая под обложку издания. */
+export type PublisherInvite = {
+  id: string;
+  name: string;
+  brand: string;
+  city: string;
+  invitedAt: string;
+};
+
+/** Издание глазами витрины: где состоит и кто зовёт. */
+export type EditionState = {
+  publisher: { id: string; name: string; brand: string; city: string } | null;
+  invites: (PublisherInvite & { publisherId: number })[];
+};
+
+/** Отчёт массовой загрузки каталога. */
+export type ImportReport = {
+  created: number;
+  rejected: number;
+  log: { ok: boolean; text: string }[];
+};
+
+/** Публичная витрина: продавец, оформление и его лоты. */
+export type Shop = {
+  seller: Seller & { activeListings: number };
+  storefront: Storefront;
+  sections: (ShopSection & { items: Listing[] })[];
+  items: Listing[];
+  total: number;
+};
+
 export type Seller = {
   id: string;
   userId: number;
@@ -48,11 +169,17 @@ export type Seller = {
   bio: string;
   online: boolean;
   role: Role;
+  plan: PlanBadge;
 };
 
 /** Аккаунт в панели администратора. */
 export type StaffUser = Seller & {
   phone: string;
+  planKey: PlanKey;
+  /** Издание, в которое входит витрина. */
+  publisherId: number | null;
+  /** Личный редактор издания. */
+  editorId: number | null;
   listingCount: number;
   blocked: boolean;
   blockedReason: string | null;
@@ -355,6 +482,10 @@ export const api = {
     request<{ category: Category }>("GET", `/categories/${slug}`).then((r) => r.category),
 
   listings: (query: CatalogQuery = {}) => request<Page<Listing>>("GET", `/listings${qs(query)}`),
+  /** Лот по номеру из каталога: «0442» или «442». */
+  listingByLot: (lot: string) =>
+    request<{ listing: Listing }>("GET", `/listings/by-lot/${encodeURIComponent(lot)}`)
+      .then((r) => r.listing),
   listing: (id: number | string) =>
     request<{ listing: Listing }>("GET", `/listings/${id}`).then((r) => r.listing),
   related: (id: number | string, limit = 4) =>
@@ -368,6 +499,65 @@ export const api = {
     request<{ seller: Seller & { activeListings: number } }>("GET", `/sellers/${slug}`).then((r) => r.seller),
   sellerListings: (slug: string, query: CatalogQuery = {}) =>
     request<Page<Listing>>("GET", `/sellers/${slug}/listings${qs(query)}`),
+
+  // ── Тарифы и витрина ──
+  plans: () => request<{ items: Plan[] }>("GET", "/plans").then((r) => r.items),
+  /** Публичная витрина магазина. */
+  shop: (slug: string) => request<Shop>("GET", `/shops/${slug}`),
+  // ── Издательский дом ──
+  /** Полоса «Выбор издания» для главной. */
+  publisherStrip: () => request<PublisherStrip>("GET", "/publishers/featured"),
+  /** Публичная страница издательского дома. */
+  publisher: (slug: string) => request<Publisher>("GET", `/publishers/${slug}`),
+  /** Кабинет издателя. */
+  publisherCabinet: () => request<PublisherCabinet>("GET", "/profile/publisher"),
+  /** Собрать полосу заново. */
+  savePicks: (listingIds: number[]) =>
+    request<{ picks: Listing[] }>("PUT", "/profile/publisher/picks", { listingIds }).then((r) => r.picks),
+  /** Позвать витрину под обложку издания: адрес страницы или телефон. */
+  invitePublisherShop: (shop: string) =>
+    request<{ invites: PublisherInvite[] }>("POST", "/profile/publisher/invites", { shop })
+      .then((r) => r.invites),
+  /** Отозвать приглашение. */
+  cancelPublisherInvite: (slug: string) =>
+    request<{ invites: PublisherInvite[] }>("DELETE", `/profile/publisher/invites/${slug}`)
+      .then((r) => r.invites),
+  /** Убрать витрину из издания. */
+  removePublisherShop: (slug: string) =>
+    request<{ shops: PublisherShop[] }>("DELETE", `/profile/publisher/shops/${slug}`)
+      .then((r) => r.shops),
+
+  // ── Сторона витрины ──
+  /** В каком издании состоит витрина и кто её зовёт. */
+  edition: () => request<EditionState>("GET", "/profile/edition"),
+  acceptEdition: (publisher: string) =>
+    request<EditionState>("POST", "/profile/edition/accept", { publisher }),
+  declineEdition: (publisher: string) =>
+    request<EditionState>("POST", "/profile/edition/decline", { publisher }),
+  leaveEdition: () => request<EditionState>("POST", "/profile/edition/leave"),
+
+  /** Массовая загрузка каталога таблицей. */
+  importCatalog: (csv: string) => request<ImportReport>("POST", "/profile/publisher/import", { csv }),
+
+  /** Настройки витрины владельца. */
+  myStorefront: () =>
+    request<{
+      storefront: Storefront;
+      plan: Plan;
+      categories: { slug: string; label: string }[];
+    }>("GET", "/profile/storefront"),
+  saveStorefront: (input: {
+    brand: string;
+    tagline: string;
+    cover: string;
+    about: string;
+    hours: string;
+    delivery: string;
+    warranty: string;
+    links: ShopLink[];
+    sections: ShopSection[];
+  }) =>
+    request<{ storefront: Storefront }>("PUT", "/profile/storefront", input).then((r) => r.storefront),
 
   articles: (query: { rubric?: string; status?: string } = {}) =>
     request<{
@@ -535,9 +725,26 @@ export const admin = {
   period: (period: string) =>
     request<{ stats: PeriodStats }>("GET", `/admin/overview/${period}`).then((r) => r.stats),
   users: (query: { q?: string; role?: string } = {}) =>
-    request<{ items: StaffUser[]; roles: Role[] }>("GET", `/admin/users${qs(query)}`),
+    request<{
+      items: StaffUser[];
+      roles: Role[];
+      publishers: { userId: number; name: string }[];
+      staff: { userId: number; name: string; role: Role }[];
+    }>("GET", `/admin/users${qs(query)}`),
   setRole: (userId: number, role: Role) =>
     request<{ user: StaffUser }>("PATCH", `/admin/users/${userId}/role`, { role }).then((r) => r.user),
+  /** Тариф назначает администратор: оплата не подключена. */
+  /** Включить витрину в издательский дом (или снять). */
+  setPublisher: (userId: number, publisherId: number | null) =>
+    request<{ user: StaffUser }>("PATCH", `/admin/users/${userId}/publisher`, { publisherId })
+      .then((r) => r.user),
+  /** Закрепить за изданием личного редактора из персонала. */
+  setEditor: (userId: number, editorId: number | null) =>
+    request<{ user: StaffUser }>("PATCH", `/admin/users/${userId}/editor`, { editorId })
+      .then((r) => r.user),
+  setPlan: (userId: number, plan: PlanKey, months?: number) =>
+    request<{ user: StaffUser }>("PATCH", `/admin/users/${userId}/plan`, { plan, months })
+      .then((r) => r.user),
   block: (userId: number, reason: string) =>
     request<{ user: StaffUser }>("POST", `/admin/users/${userId}/block`, { reason }).then((r) => r.user),
   unblock: (userId: number) =>

@@ -4,6 +4,7 @@ import api from "../api";
 import { useCity } from "../city";
 import { useAsync, useDebounced } from "../hooks";
 import { ErrorState, LotGrid, Rule } from "../components";
+import { parseLotQuery } from "../search";
 
 const SORTS = [
   { key: "new", label: "Сначала новые" },
@@ -28,6 +29,10 @@ export default function Catalog() {
 
   const [cols, setCols] = useState(4);
 
+  // Поле поиска внутри каталога: q в адресе — источник правды.
+  const [term, setTerm] = useState(q);
+  useEffect(() => setTerm(q), [q]);
+
   // Город из шапки — общий фильтр витрины; на странице его можно снять.
   const { city } = useCity();
   const cityFilter = params.get("city") === "all" ? undefined : city ?? undefined;
@@ -46,6 +51,12 @@ export default function Catalog() {
     if (page > 1) patch({ page: null });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [slug, q, conds.join(","), minPrice, maxPrice, sort, cityFilter]);
+
+  /** Лот, номер которого совпал с запросом точь-в-точь. */
+  const lotQuery = parseLotQuery(q);
+  const exactLot = lotQuery
+    ? (data?.items ?? []).find((item) => item.lot === lotQuery.lot) ?? null
+    : null;
 
   /** Точечно правит query-строку, сохраняя остальные параметры. */
   function patch(changes: Record<string, string | string[] | null>) {
@@ -135,6 +146,28 @@ export default function Catalog() {
         <aside className="md:col-span-3">
           <div className="md:sticky md:top-40 flex flex-col gap-8">
             <div>
+              <h3 className="mono-label mb-4" style={{ color: "#1f232099" }}>Поиск</h3>
+              <form
+                onSubmit={(e) => { e.preventDefault(); patch({ q: term.trim() || null }); }}
+                className="flex items-center gap-2 px-4"
+                style={{ border: "1px solid #1f232033", borderRadius: 14, background: "#f6f0e3" }}
+              >
+                <input
+                  type="search"
+                  value={term}
+                  onChange={(e) => setTerm(e.target.value)}
+                  placeholder="Запрос или номер лота"
+                  aria-label="Поиск по каталогу"
+                  className="flex-1 py-3 outline-none"
+                  style={{ border: "none", background: "none", color: "#1f2320", fontFamily: "'JetBrains Mono', monospace", fontSize: 12.5, minWidth: 0 }}
+                />
+                <button type="submit" aria-label="Искать" style={{ background: "none", border: "none", cursor: "pointer", lineHeight: 0, padding: "8px 0" }}>
+                  <svg width="16" height="16" viewBox="0 0 20 20" fill="none"><circle cx="8.5" cy="8.5" r="5.5" stroke="#1f2320" strokeWidth="1.6"/><path d="M13.5 13.5L18 18" stroke="#1f2320" strokeWidth="1.6" strokeLinecap="round"/></svg>
+                </button>
+              </form>
+            </div>
+
+            <div>
               <h3 className="mono-label mb-4" style={{ color: "#1f232099" }}>Город</h3>
               {cityFilter ? (
                 <div className="flex items-center justify-between gap-2" style={{ fontSize: 15 }}>
@@ -208,6 +241,20 @@ export default function Catalog() {
               </div>
             </div>
           </div>
+
+          {/* Точное попадание по номеру лота — открываем карточку одним щелчком. */}
+          {exactLot && (
+            <Link
+              to={`/lot/${exactLot.id}`}
+              className="flex items-center justify-between gap-4 mb-4 flex-wrap px-5 py-4"
+              style={{ background: "#1f2320", color: "#efe8da", borderRadius: 14, textDecoration: "none" }}
+            >
+              <span className="mono-label">
+                Лот {exactLot.lot} · {exactLot.title}
+              </span>
+              <span className="mono-label">Открыть карточку →</span>
+            </Link>
+          )}
 
           {error && items.length > 0 && (
             <div className="flex items-center justify-between gap-4 mb-4 flex-wrap px-4 py-3" style={{ border: "1px solid #a3333322", borderRadius: 14, background: "#f6f0e3" }}>

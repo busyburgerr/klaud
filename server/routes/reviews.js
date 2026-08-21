@@ -21,8 +21,8 @@ const REVIEW_SELECT = `
  * Пересчитывает рейтинг и число сделок пользователя по его отзывам.
  * Рейтинг — среднее по оценкам, сделки — число успешных.
  */
-export function recalcRating(userId) {
-  const stats = get(
+export async function recalcRating(userId) {
+  const stats = await get(
     `SELECT COUNT(*) AS total,
             COALESCE(AVG(rating), 0) AS avg,
             COALESCE(SUM(deal_success), 0) AS deals
@@ -30,7 +30,7 @@ export function recalcRating(userId) {
     userId,
   );
 
-  run(
+  await run(
     "UPDATE users SET rating = ?, deals = ? WHERE id = ?",
     stats.total ? Math.round(stats.avg * 10) / 10 : 0,
     stats.deals,
@@ -40,16 +40,21 @@ export function recalcRating(userId) {
 }
 
 // GET /api/reviews/user/:slug — отзывы о продавце
-reviewsRouter.get("/user/:slug", (req, res) => {
-  const user = get("SELECT id, rating, deals FROM users WHERE slug = ?", req.params.slug);
+reviewsRouter.get("/user/:slug", async (req, res) => {
+  const user = await get("SELECT id, rating, deals FROM users WHERE slug = ?", req.params.slug);
   if (!user) throw notFound("Пользователь не найден");
 
-  const rows = all(`${REVIEW_SELECT} WHERE r.target_id = ? ORDER BY r.created_at DESC LIMIT 100`, user.id);
-  const summary = get(
+  const rows = await all(`${REVIEW_SELECT} WHERE r.target_id = ? ORDER BY r.created_at DESC LIMIT 100`, user.id);
+  const summary = await get(
     `SELECT COUNT(*) AS total,
             COALESCE(AVG(rating), 0) AS avg,
             COALESCE(SUM(deal_success), 0) AS successful
        FROM reviews WHERE target_id = ?`,
+    user.id,
+  );
+  // Разбивка по оценкам одним запросом вместо пяти отдельных COUNT.
+  const byStar = await all(
+    "SELECT rating, COUNT(*) AS c FROM reviews WHERE target_id = ? GROUP BY rating",
     user.id,
   );
 
@@ -62,21 +67,21 @@ reviewsRouter.get("/user/:slug", (req, res) => {
       failed: summary.total - summary.successful,
       breakdown: [5, 4, 3, 2, 1].map((star) => ({
         star,
-        count: get("SELECT COUNT(*) AS c FROM reviews WHERE target_id = ? AND rating = ?", user.id, star).c,
+        count: byStar.find((r) => r.rating === star)?.c ?? 0,
       })),
     },
   });
 });
 
 // GET /api/reviews/listing/:id — отзыв по конкретному лоту
-reviewsRouter.get("/listing/:id", (req, res) => {
-  const rows = all(`${REVIEW_SELECT} WHERE r.listing_id = ? ORDER BY r.created_at DESC`, Number(req.params.id));
+reviewsRouter.get("/listing/:id", async (req, res) => {
+  const rows = await all(`${REVIEW_SELECT} WHERE r.listing_id = ? ORDER BY r.created_at DESC`, Number(req.params.id));
   res.json({ items: rows.map(S.review) });
 });
 
 // GET /api/reviews/pending — сделки, по которым можно оставить отзыв
-reviewsRouter.get("/pending", requireAuth, (req, res) => {
-  const rows = all(
+reviewsRouter.get("/pending", requireAuth, async (req, res) => {
+  const rows = await all(
     `SELECT l.id, l.lot, l.title, l.price, l.sold_at,
             u.name AS seller_name, u.slug AS seller_slug,
             (SELECT url FROM listing_images i WHERE i.listing_id = l.id ORDER BY i.position LIMIT 1) AS img
@@ -104,7 +109,7 @@ reviewsRouter.get("/pending", requireAuth, (req, res) => {
 reviewsRouter.post(
   "/",
   requireAuth,
-  wrap((req, res) => {
+  wrap(async (req, res) => {
     const body = v(req.body)
       .int("listingId", { required: true, min: 1 })
       .int("rating", { required: true, min: 1, max: 5 })
@@ -112,29 +117,29 @@ reviewsRouter.post(
       .str("text", { max: 1000, fallback: "" })
       .done();
 
-    const listing = get("SELECT * FROM listings WHERE id = ?", body.listingId);
+    const listing = await get("SELECT * FROM listings WHERE id = ?", body.listingId);
     if (!listing) throw notFound("Лот не найден");
     if (listing.status !== "sold") throw badRequest("Отзыв можно оставить только по завершённой сделке");
     if (listing.sold_to !== req.user.id) throw forbidden("Отзыв оставляет покупатель этого лота");
 
-    const existing = get(
+    const existing = await get(
       "SELECT 1 AS x FROM reviews WHERE listing_id = ? AND author_id = ?",
       listing.id, req.user.id,
     );
     if (existing) throw conflict("Вы уже оставили отзыв по этой сделке");
 
-    const id = tx(() => {
-      run(
+    const id = await tx(async () => {
+      const { id: created } = await get(
         `INSERT INTO reviews (listing_id, author_id, target_id, rating, deal_success, text)
-         VALUES (?, ?, ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?)
+         RETURNING id`,
         listing.id, req.user.id, listing.seller_id, body.rating, body.dealSuccess ? 1 : 0, body.text,
       );
-      const created = get("SELECT id FROM reviews WHERE rowid = last_insert_rowid()").id;
-      recalcRating(listing.seller_id);
+      await recalcRating(listing.seller_id);
       return created;
     });
 
-    res.status(201).json({ review: S.review(get(`${REVIEW_SELECT} WHERE r.id = ?`, id)) });
+    res.status(201).json({ review: S.review(await get(`${REVIEW_SELECT} WHERE r.id = ?`, id)) });
   }),
 );
 
@@ -142,14 +147,14 @@ reviewsRouter.post(
 reviewsRouter.delete(
   "/:id",
   requireAuth,
-  wrap((req, res) => {
-    const review = get("SELECT * FROM reviews WHERE id = ?", Number(req.params.id));
+  wrap(async (req, res) => {
+    const review = await get("SELECT * FROM reviews WHERE id = ?", Number(req.params.id));
     if (!review) throw notFound("Отзыв не найден");
     if (review.author_id !== req.user.id) throw forbidden("Это чужой отзыв");
 
-    tx(() => {
-      run("DELETE FROM reviews WHERE id = ?", review.id);
-      recalcRating(review.target_id);
+    await tx(async () => {
+      await run("DELETE FROM reviews WHERE id = ?", review.id);
+      await recalcRating(review.target_id);
     });
 
     res.json({ ok: true, id: review.id });

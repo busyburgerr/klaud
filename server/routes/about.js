@@ -12,15 +12,15 @@ const ROLE_TITLE = {
 };
 
 // GET /api/about — всё содержимое страницы «О проекте»
-aboutRouter.get("/", (_req, res) => {
-  const blocks = all("SELECT kind, label, title, text FROM about_blocks ORDER BY kind, position");
+aboutRouter.get("/", async (_req, res) => {
+  const blocks = await all("SELECT kind, label, title, text FROM about_blocks ORDER BY kind, position");
 
   // Редакция — это настоящие служебные аккаунты, а не выдуманные лица.
-  const team = all(
+  const team = (await all(
     `SELECT slug, name, role, bio FROM users
       WHERE role IN ('admin', 'moderator')
       ORDER BY CASE role WHEN 'admin' THEN 0 ELSE 1 END, created_at`,
-  ).map((u) => ({
+  )).map((u) => ({
     id: u.slug,
     name: u.name,
     initial: initialOf(u.name),
@@ -33,6 +33,6 @@ aboutRouter.get("/", (_req, res) => {
     principles: blocks.filter((b) => b.kind === "principle").map(({ label, title, text }) => ({ n: label, title, text })),
     milestones: blocks.filter((b) => b.kind === "milestone").map(({ label, title, text }) => ({ period: label, title, text })),
     team,
-    metrics: publicMetrics(),
+    metrics: await publicMetrics(),
   });
 });

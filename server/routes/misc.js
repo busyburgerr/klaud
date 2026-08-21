@@ -24,12 +24,12 @@ const SHORTCUTS = [
 const FILTER_CATS = ["Все лоты", "Автомобили", "Электроника", "Недвижимость", "Одежда", "Для дома"];
 
 // GET /api/meta — счётчики бегущей строки и статические подписи интерфейса
-metaRouter.get("/", (_req, res) => {
-  const listings = get("SELECT COUNT(*) AS c FROM listings WHERE status = 'active'").c;
-  const sellers = get("SELECT COUNT(*) AS c FROM users").c;
+metaRouter.get("/", async (_req, res) => {
+  const listings = (await get("SELECT COUNT(*) AS c FROM listings WHERE status = 'active'")).c;
+  const sellers = (await get("SELECT COUNT(*) AS c FROM users")).c;
   // display_count — декоративные числа из макета. В демо-базе они заданы, в
   // очищенной равны нулю, и тогда витрина показывает только настоящие цифры.
-  const display = get("SELECT COALESCE(SUM(display_count), 0) AS c FROM categories").c;
+  const display = (await get("SELECT COALESCE(SUM(display_count), 0) AS c FROM categories")).c;
   const totalListings = display + listings;
 
   res.json({
@@ -54,13 +54,13 @@ metaRouter.get("/", (_req, res) => {
 });
 
 // GET /api/meta/metrics — витринные показатели площадки, все из базы
-metaRouter.get("/metrics", (_req, res) => {
-  res.json({ metrics: publicMetrics() });
+metaRouter.get("/metrics", async (_req, res) => {
+  res.json({ metrics: await publicMetrics() });
 });
 
 // GET /api/meta/home — всё, что нужно главной странице, одним запросом
-metaRouter.get("/home", (req, res) => {
-  const featured = queryListings({ limit: 8 }, { viewerId: req.user?.id });
+metaRouter.get("/home", async (req, res) => {
+  const featured = await queryListings({ limit: 8 }, { viewerId: req.user?.id });
   res.json({ featured: featured.items, shortcuts: SHORTCUTS, filterCats: FILTER_CATS });
 });
 
@@ -86,7 +86,7 @@ const upload = multer({
 });
 
 // POST /api/uploads — multipart-поле `images`, до 10 файлов по 5 МБ
-uploadsRouter.post("/", requireAuth, upload.array("images", 10), (req, res) => {
+uploadsRouter.post("/", requireAuth, upload.array("images", 10), async (req, res) => {
   const files = req.files || [];
   if (!files.length) throw badRequest("Не передано ни одного файла");
   res.status(201).json({ urls: files.map((f) => `/uploads/${f.filename}`) });
@@ -95,8 +95,8 @@ uploadsRouter.post("/", requireAuth, upload.array("images", 10), (req, res) => {
 // ── Города ──
 
 // GET /api/cities — справочник для выбора города в шапке
-citiesRouter.get("/", (_req, res) => {
-  const rows = all(`
+citiesRouter.get("/", async (_req, res) => {
+  const rows = await all(`
     SELECT c.*,
            (SELECT COUNT(*) FROM listings l
              WHERE l.location = c.name AND l.status = 'active') AS listing_count

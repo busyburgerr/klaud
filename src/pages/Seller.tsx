@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Link, useNavigate, useParams } from "react-router";
+import { Link, Navigate, useNavigate, useParams, useSearchParams } from "react-router";
 import api, { ApiError } from "../api";
 import { useAuth } from "../auth";
 import { useAsync } from "../hooks";
@@ -8,6 +8,7 @@ import { ReviewList, ReviewSummaryCard } from "../Reviews";
 
 export default function Seller() {
   const { id } = useParams();
+  const [params] = useSearchParams();
   const navigate = useNavigate();
   const { user } = useAuth();
   const [busy, setBusy] = useState(false);
@@ -35,6 +36,13 @@ export default function Seller() {
         <Link to="/catalog" className="mono-label underline-link" style={{ color: "#1f2320", textDecoration: "none" }}>← Вернуться в каталог</Link>
       </div>
     );
+  }
+
+  // У продавца с оформленным магазином страница — это витрина, а у издателя —
+  // страница дома. `?plain=1` оставляет обычный профиль: ссылка на него есть
+  // и на витрине, и на странице издания.
+  if (seller.plan.storefront && !params.has("plain")) {
+    return <Navigate to={seller.plan.key === "edition" ? `/publisher/${id}` : `/shop/${id}`} replace />;
   }
 
   const items = listings?.items ?? [];

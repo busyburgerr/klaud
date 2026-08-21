@@ -1,9 +1,16 @@
 import { Fragment, useState } from "react";
 import { Link } from "react-router";
-import { ApiError, admin as adminApi, moderation, type LogEntry, type Listing, type ProjectStats, type Report, type Role, type StaffUser } from "../api";
+import { ApiError, admin as adminApi, moderation, type LogEntry, type Listing, type PlanKey, type ProjectStats, type Report, type Role, type StaffUser } from "../api";
 import { useAuth } from "../auth";
 import { useAsync } from "../hooks";
 import { EmptyState, ErrorState, Rule } from "../components";
+
+/** Подписи тарифов в панели — совпадают с server/lib/plans.js. */
+const PLAN_LABEL: Record<PlanKey, string> = {
+  shelf: "Полка",
+  storefront: "Витрина",
+  edition: "Издание",
+};
 
 const STATUS_LABEL: Record<string, string> = {
   pending: "на проверке",
@@ -492,6 +499,11 @@ function Users({ currentUserId }: { currentUserId: number }) {
                     {u.role !== "user" && (
                       <span className="mono-label" style={{ background: "#1f2320", color: "#efe8da", borderRadius: 999, padding: "3px 10px" }}>{ROLE_LABEL[u.role]}</span>
                     )}
+                    {u.planKey !== "shelf" && (
+                      <span className="mono-label" style={{ border: "1px solid #1f232055", borderRadius: 999, padding: "3px 10px", color: "#1f2320" }}>
+                        ✳ {PLAN_LABEL[u.planKey]}
+                      </span>
+                    )}
                     {u.blocked && (
                       <span className="mono-label" style={{ border: "1px solid #a33", color: "#a33", borderRadius: 999, padding: "3px 10px" }}>заблокирован</span>
                     )}
@@ -505,7 +517,52 @@ function Users({ currentUserId }: { currentUserId: number }) {
                 </div>
               </div>
 
-              <div className="flex gap-2 flex-wrap justify-end flex-shrink-0">
+              <div className="flex gap-2 flex-wrap justify-end flex-shrink-0 items-center">
+                {/* Оплата не подключена: тариф назначает администратор. */}
+                <select
+                  value={u.planKey}
+                  disabled={busyId === u.userId}
+                  onChange={(e) => act(u.userId, () => adminApi.setPlan(u.userId, e.target.value as PlanKey, 12))}
+                  className="mono-label"
+                  style={{ border: "1px solid #1f232033", borderRadius: 999, padding: "9px 14px", background: "#f6f0e3", cursor: "pointer" }}
+                  title="Тариф продавца"
+                >
+                  {(Object.keys(PLAN_LABEL) as PlanKey[]).map((key) => (
+                    <option key={key} value={key}>{PLAN_LABEL[key]}</option>
+                  ))}
+                </select>
+
+                {/* Витрина может входить в издательский дом. */}
+                {u.planKey !== "shelf" && (data?.publishers.length ?? 0) > 0 && (
+                  <select
+                    value={u.publisherId ?? ""}
+                    disabled={busyId === u.userId}
+                    onChange={(e) => act(u.userId, () => adminApi.setPublisher(u.userId, e.target.value ? Number(e.target.value) : null))}
+                    className="mono-label"
+                    style={{ border: "1px solid #1f232033", borderRadius: 999, padding: "9px 14px", background: "#f6f0e3", cursor: "pointer" }}
+                    title="Издательский дом"
+                  >
+                    <option value="">Вне издания</option>
+                    {data?.publishers
+                      .filter((p) => p.userId !== u.userId)
+                      .map((p) => <option key={p.userId} value={p.userId}>{p.name}</option>)}
+                  </select>
+                )}
+
+                {/* Личный редактор закрепляется за изданием. */}
+                {u.planKey === "edition" && (
+                  <select
+                    value={u.editorId ?? ""}
+                    disabled={busyId === u.userId}
+                    onChange={(e) => act(u.userId, () => adminApi.setEditor(u.userId, e.target.value ? Number(e.target.value) : null))}
+                    className="mono-label"
+                    style={{ border: "1px solid #1f232033", borderRadius: 999, padding: "9px 14px", background: "#f6f0e3", cursor: "pointer" }}
+                    title="Личный редактор издания"
+                  >
+                    <option value="">Без редактора</option>
+                    {data?.staff.map((p) => <option key={p.userId} value={p.userId}>{p.name}</option>)}
+                  </select>
+                )}
                 {u.userId === currentUserId ? (
                   <span className="mono-label" style={{ color: "#1f232099" }}>это вы</span>
                 ) : (

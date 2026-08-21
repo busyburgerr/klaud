@@ -9,7 +9,14 @@ export const SERVER_DIR = here;
 export const config = {
   port: parseInt(process.env.API_PORT || "3001", 10),
   host: process.env.API_HOST || "0.0.0.0",
-  dbFile: process.env.DB_FILE || path.join(ROOT, "data", "cloud.db"),
+  // Postgres: строка подключения целиком либо отдельные переменные.
+  databaseUrl: process.env.DATABASE_URL
+    || `postgres://${process.env.PGUSER || "cloud"}:${process.env.PGPASSWORD || "cloud"}`
+      + `@${process.env.PGHOST || "127.0.0.1"}:${process.env.PGPORT || 5432}`
+      + `/${process.env.PGDATABASE || "cloud"}`,
+  // Отдельная схема удобна для тестов: каждый набор работает в своей.
+  dbSchema: process.env.DB_SCHEMA || "public",
+  dbPoolMax: parseInt(process.env.DB_POOL_MAX || "10", 10),
   uploadsDir: process.env.UPLOADS_DIR || path.join(here, "uploads"),
   jwtSecret: process.env.JWT_SECRET || "cloud-dev-secret-change-me",
   // В проде тот же процесс раздаёт dist/; SERVE_CLIENT=off отключает.
@@ -40,6 +47,9 @@ export function assertProductionConfig() {
   }
   if (config.jwtSecret.length < 32) {
     problems.push("JWT_SECRET короче 32 символов");
+  }
+  if (!process.env.DATABASE_URL && !process.env.PGPASSWORD) {
+    problems.push("DATABASE_URL не задан — подключение к базе идёт с паролем из примера");
   }
 
   if (problems.length) {

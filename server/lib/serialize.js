@@ -1,4 +1,5 @@
 import { normalizeBlocks } from "./blocks.js";
+import { effectivePlan, planActive, PLANS } from "./plans.js";
 import {
   displayPhone,
   formatPrice,
@@ -25,6 +26,42 @@ export function publicUser(row) {
     bio: row.bio,
     online: isOnline(row.last_seen_at),
     role: row.role ?? "user",
+    plan: plan(row),
+  };
+}
+
+/**
+ * Тариф в том виде, в каком его показывает интерфейс: подпись рядом с городом,
+ * срок действия и признак «оформленная витрина доступна».
+ */
+export function plan(row) {
+  const active = effectivePlan(row);
+  const chosen = PLANS[row?.plan] ?? PLANS.shelf;
+  return {
+    key: active.key,
+    label: active.label,
+    storefront: active.storefront,
+    until: row?.plan_until ?? null,
+    // Тариф выбран, но срок вышел — интерфейсу нужно об этом сказать.
+    expired: chosen.key !== "shelf" && !planActive(row),
+  };
+}
+
+/** Оформление магазина. */
+export function storefront(row, { links = [], sections = [] } = {}) {
+  return {
+    brand: row?.brand ?? "",
+    tagline: row?.tagline ?? "",
+    cover: row?.cover ?? "",
+    about: row?.about ?? "",
+    conditions: {
+      hours: row?.hours ?? "",
+      delivery: row?.delivery ?? "",
+      warranty: row?.warranty ?? "",
+    },
+    links: links.map((l) => ({ id: l.id, network: l.network, handle: l.handle, url: l.url })),
+    sections: sections.map((x) => ({ id: x.id, title: x.title, blurb: x.blurb, cat: x.cat })),
+    updatedAt: row?.updated_at ?? null,
   };
 }
 
@@ -208,6 +245,9 @@ export function staffUser(row) {
     ...publicUser(row),
     phone: displayPhone(row.phone),
     listingCount: row.listing_count ?? 0,
+    planKey: row.plan ?? "shelf",
+    publisherId: row.publisher_id ?? null,
+    editorId: row.editor_id ?? null,
     blocked: !!row.blocked_at,
     blockedReason: row.blocked_reason ?? null,
     createdAt: row.created_at,

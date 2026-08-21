@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { all, get, run, tx } from "../db/index.js";
 import { badRequest, conflict, forbidden, notFound, wrap } from "../lib/http.js";
-import { findListing, queryListings } from "../lib/listings.js";
+import { findListing, findListingByLot, queryListings } from "../lib/listings.js";
 import { v } from "../lib/validate.js";
 import { requireAuth } from "../middleware/auth.js";
 import { REPORT_REASONS } from "./moderation.js";
@@ -17,39 +17,50 @@ const CONDITIONS = ["Новое", "Отличное", "Хорошее", "Тре�
 const OWNER_STATUSES = ["archived"];
 
 /** Следующий номер лота: 0417 → 0418. */
-function nextLotNumber() {
-  const max = get("SELECT MAX(CAST(lot AS INTEGER)) AS m FROM listings")?.m ?? 400;
+async function nextLotNumber() {
+  const max = (await get("SELECT MAX(CAST(lot AS INTEGER)) AS m FROM listings"))?.m ?? 400;
   return String(max + 1).padStart(4, "0");
 }
 
-function ownedListing(id, userId) {
-  const row = get("SELECT * FROM listings WHERE id = ?", Number(id));
+async function ownedListing(id, userId) {
+  const row = await get("SELECT * FROM listings WHERE id = ?", Number(id));
   if (!row) throw notFound("Лот не найден");
   if (row.seller_id !== userId) throw forbidden("Это чужой лот");
   return row;
 }
 
 // GET /api/listings — каталог с фильтрами и поиском
-listingsRouter.get("/", (req, res) => {
-  res.json(queryListings(req.query, { viewerId: req.user?.id }));
+listingsRouter.get("/", async (req, res) => {
+  res.json(await queryListings(req.query, { viewerId: req.user?.id }));
 });
 
+// GET /api/listings/by-lot/:lot — лот по номеру из каталога
+// Объявлен до «/:id», иначе номер приняли бы за идентификатор.
+listingsRouter.get(
+  "/by-lot/:lot",
+  wrap(async (req, res) => {
+    const item = await findListingByLot(req.params.lot, { viewerId: req.user?.id });
+    if (!item) throw notFound("Лот с таким номером не найден");
+    res.json({ listing: item });
+  }),
+);
+
 // GET /api/listings/:id
-listingsRouter.get("/:id", (req, res) => {
-  const item = findListing(req.params.id, { viewerId: req.user?.id });
+listingsRouter.get("/:id", async (req, res) => {
+  const item = await findListing(req.params.id, { viewerId: req.user?.id });
   if (!item) throw notFound("Лот не найден");
 
-  run("UPDATE listings SET views = views + 1 WHERE id = ?", item.id);
+  await run("UPDATE listings SET views = views + 1 WHERE id = ?", item.id);
   res.json({ listing: { ...item, views: item.views + 1 } });
 });
 
 // GET /api/listings/:id/related — похожие лоты того же раздела
-listingsRouter.get("/:id/related", (req, res) => {
-  const item = get("SELECT cat FROM listings WHERE id = ?", Number(req.params.id));
+listingsRouter.get("/:id/related", async (req, res) => {
+  const item = await get("SELECT cat FROM listings WHERE id = ?", Number(req.params.id));
   if (!item) throw notFound("Лот не найден");
 
   const limit = Math.min(12, Number(req.query.limit) || 4);
-  const { items } = queryListings(
+  const { items } = await queryListings(
     { cat: item.cat, limit: limit + 1 },
     { viewerId: req.user?.id },
   );
@@ -60,7 +71,7 @@ listingsRouter.get("/:id/related", (req, res) => {
 listingsRouter.post(
   "/",
   requireAuth,
-  wrap((req, res) => {
+  wrap(async (req, res) => {
     const body = v(req.body)
       .str("title", { required: true, min: 4, max: 140 })
       .int("price", { required: true, min: 0, max: 1_000_000_000 })
@@ -71,25 +82,25 @@ listingsRouter.post(
       .strArray("images", { max: 10, fallback: [] })
       .done();
 
-    if (!get("SELECT 1 AS x FROM categories WHERE slug = ?", body.cat)) {
+    if (!await get("SELECT 1 AS x FROM categories WHERE slug = ?", body.cat)) {
       throw badRequest("Неизвестный раздел каталога", { cat: "Раздел не найден" });
     }
 
-    const id = tx(() => {
-      run(
+    const id = await tx(async () => {
+      const { id: created } = await get(
         `INSERT INTO listings (lot, title, price, location, cond, description, cat, seller_id, status)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending')`,
-        nextLotNumber(), body.title, body.price, body.location, body.cond,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending')
+         RETURNING id`,
+        await nextLotNumber(), body.title, body.price, body.location, body.cond,
         body.description, body.cat, req.user.id,
       );
-      const created = get("SELECT id FROM listings WHERE rowid = last_insert_rowid()").id;
-      body.images.forEach((url, i) => {
-        run("INSERT INTO listing_images (listing_id, url, position) VALUES (?, ?, ?)", created, url, i);
-      });
+      for (const [i, url] of body.images.entries()) {
+        await run("INSERT INTO listing_images (listing_id, url, position) VALUES (?, ?, ?)", created, url, i);
+      }
       return created;
     });
 
-    res.status(201).json({ listing: findListing(id, { viewerId: req.user.id }) });
+    res.status(201).json({ listing: await findListing(id, { viewerId: req.user.id }) });
   }),
 );
 
@@ -97,8 +108,8 @@ listingsRouter.post(
 listingsRouter.patch(
   "/:id",
   requireAuth,
-  wrap((req, res) => {
-    const existing = ownedListing(req.params.id, req.user.id);
+  wrap(async (req, res) => {
+    const existing = await ownedListing(req.params.id, req.user.id);
 
     const body = v(req.body)
       .str("title", { min: 4, max: 140 })
@@ -111,7 +122,7 @@ listingsRouter.patch(
       .strArray("images", { max: 10 })
       .done();
 
-    if (body.cat && !get("SELECT 1 AS x FROM categories WHERE slug = ?", body.cat)) {
+    if (body.cat && !await get("SELECT 1 AS x FROM categories WHERE slug = ?", body.cat)) {
       throw badRequest("Неизвестный раздел каталога", { cat: "Раздел не найден" });
     }
 
@@ -123,30 +134,30 @@ listingsRouter.patch(
     const contentChanged = fields.some((f) => f !== "status") || body.images !== undefined;
     const backToQueue = contentChanged && ["active", "rejected"].includes(existing.status);
 
-    tx(() => {
+    await tx(async () => {
       if (fields.length) {
-        run(
-          `UPDATE listings SET ${fields.map((f) => `${f} = ?`).join(", ")}, updated_at = datetime('now') WHERE id = ?`,
+        await run(
+          `UPDATE listings SET ${fields.map((f) => `${f} = ?`).join(", ")}, updated_at = now_utc() WHERE id = ?`,
           ...fields.map((f) => body[f]), existing.id,
         );
       }
       if (backToQueue) {
-        run(
+        await run(
           `UPDATE listings SET status = 'pending', reject_reason = NULL, moderated_by = NULL,
-                               moderated_at = NULL, updated_at = datetime('now')
+                               moderated_at = NULL, updated_at = now_utc()
             WHERE id = ?`,
           existing.id,
         );
       }
       if (body.images) {
-        run("DELETE FROM listing_images WHERE listing_id = ?", existing.id);
-        body.images.forEach((url, i) => {
-          run("INSERT INTO listing_images (listing_id, url, position) VALUES (?, ?, ?)", existing.id, url, i);
-        });
+        await run("DELETE FROM listing_images WHERE listing_id = ?", existing.id);
+        for (const [i, url] of body.images.entries()) {
+          await run("INSERT INTO listing_images (listing_id, url, position) VALUES (?, ?, ?)", existing.id, url, i);
+        }
       }
     });
 
-    res.json({ listing: findListing(existing.id, { viewerId: req.user.id }) });
+    res.json({ listing: await findListing(existing.id, { viewerId: req.user.id }) });
   }),
 );
 
@@ -154,9 +165,9 @@ listingsRouter.patch(
 listingsRouter.delete(
   "/:id",
   requireAuth,
-  wrap((req, res) => {
-    const existing = ownedListing(req.params.id, req.user.id);
-    run("DELETE FROM listings WHERE id = ?", existing.id);
+  wrap(async (req, res) => {
+    const existing = await ownedListing(req.params.id, req.user.id);
+    await run("DELETE FROM listings WHERE id = ?", existing.id);
     res.json({ ok: true, id: existing.id });
   }),
 );
@@ -165,27 +176,27 @@ listingsRouter.delete(
 listingsRouter.post(
   "/:id/sell",
   requireAuth,
-  wrap((req, res) => {
-    const existing = ownedListing(req.params.id, req.user.id);
+  wrap(async (req, res) => {
+    const existing = await ownedListing(req.params.id, req.user.id);
     if (existing.status === "sold") throw badRequest("Лот уже отмечен проданным");
 
     const body = v(req.body).int("buyerId", { min: 1 }).done();
 
     let buyerId = null;
     if (body.buyerId) {
-      const buyer = get("SELECT id FROM users WHERE id = ?", body.buyerId);
+      const buyer = await get("SELECT id FROM users WHERE id = ?", body.buyerId);
       if (!buyer) throw badRequest("Покупатель не найден", { buyerId: "Нет такого пользователя" });
       if (buyer.id === req.user.id) throw badRequest("Нельзя продать лот самому себе");
       buyerId = buyer.id;
     }
 
-    run(
-      `UPDATE listings SET status = 'sold', sold_at = datetime('now'), sold_to = ?,
-                           updated_at = datetime('now')
+    await run(
+      `UPDATE listings SET status = 'sold', sold_at = now_utc(), sold_to = ?,
+                           updated_at = now_utc()
         WHERE id = ?`,
       buyerId, existing.id,
     );
-    res.json({ listing: findListing(existing.id, { viewerId: req.user.id }) });
+    res.json({ listing: await findListing(existing.id, { viewerId: req.user.id }) });
   }),
 );
 
@@ -193,9 +204,9 @@ listingsRouter.post(
 listingsRouter.get(
   "/:id/buyers",
   requireAuth,
-  wrap((req, res) => {
-    const existing = ownedListing(req.params.id, req.user.id);
-    const rows = all(
+  wrap(async (req, res) => {
+    const existing = await ownedListing(req.params.id, req.user.id);
+    const rows = await all(
       `SELECT u.id, u.name, u.slug FROM threads t
          JOIN users u ON u.id = t.buyer_id
         WHERE t.listing_id = ?
@@ -210,19 +221,19 @@ listingsRouter.get(
 listingsRouter.post(
   "/:id/resubmit",
   requireAuth,
-  wrap((req, res) => {
-    const existing = ownedListing(req.params.id, req.user.id);
+  wrap(async (req, res) => {
+    const existing = await ownedListing(req.params.id, req.user.id);
     if (existing.status !== "rejected" && existing.status !== "archived") {
       throw badRequest("На проверку отправляются только отклонённые или снятые лоты");
     }
 
-    run(
+    await run(
       `UPDATE listings SET status = 'pending', reject_reason = NULL, moderated_by = NULL,
-                           moderated_at = NULL, updated_at = datetime('now')
+                           moderated_at = NULL, updated_at = now_utc()
         WHERE id = ?`,
       existing.id,
     );
-    res.json({ listing: findListing(existing.id, { viewerId: req.user.id }) });
+    res.json({ listing: await findListing(existing.id, { viewerId: req.user.id }) });
   }),
 );
 
@@ -230,8 +241,8 @@ listingsRouter.post(
 listingsRouter.post(
   "/:id/report",
   requireAuth,
-  wrap((req, res) => {
-    const listing = get("SELECT * FROM listings WHERE id = ?", Number(req.params.id));
+  wrap(async (req, res) => {
+    const listing = await get("SELECT * FROM listings WHERE id = ?", Number(req.params.id));
     if (!listing) throw notFound("Лот не найден");
     if (listing.seller_id === req.user.id) throw badRequest("Нельзя пожаловаться на собственный лот");
 
@@ -240,13 +251,13 @@ listingsRouter.post(
       .str("comment", { max: 500, fallback: "" })
       .done();
 
-    const existing = get(
+    const existing = await get(
       "SELECT 1 AS x FROM reports WHERE listing_id = ? AND reporter_id = ?",
       listing.id, req.user.id,
     );
     if (existing) throw conflict("Вы уже жаловались на этот лот");
 
-    run(
+    await run(
       "INSERT INTO reports (listing_id, reporter_id, reason, comment) VALUES (?, ?, ?, ?)",
       listing.id, req.user.id, body.reason, body.comment,
     );
@@ -255,21 +266,21 @@ listingsRouter.post(
 );
 
 // GET /api/listings/meta/report-reasons — варианты для формы жалобы
-listingsRouter.get("/meta/report-reasons", (_req, res) => {
+listingsRouter.get("/meta/report-reasons", async (_req, res) => {
   res.json({ reasons: REPORT_REASONS });
 });
 
 // GET /api/listings/meta/filters — значения для фильтров каталога
-listingsRouter.get("/meta/filters", (_req, res) => {
+listingsRouter.get("/meta/filters", async (_req, res) => {
   res.json({
     conditions: CONDITIONS,
-    locations: all("SELECT DISTINCT location FROM listings ORDER BY location").map((r) => r.location),
+    locations: (await all("SELECT DISTINCT location FROM listings ORDER BY location")).map((r) => r.location),
     sorts: [
       { key: "new", label: "Сначала новые" },
       { key: "price_asc", label: "Дешевле" },
       { key: "price_desc", label: "Дороже" },
       { key: "popular", label: "Популярные" },
     ],
-    price: get("SELECT MIN(price) AS min, MAX(price) AS max FROM listings WHERE status = 'active'"),
+    price: await get("SELECT MIN(price) AS min, MAX(price) AS max FROM listings WHERE status = 'active'"),
   });
 });

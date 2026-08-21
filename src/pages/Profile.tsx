@@ -6,8 +6,9 @@ import { useAsync } from "../hooks";
 import { EmptyState, FieldError, LotGrid, Rule } from "../components";
 import { ReviewList, ReviewSummaryCard, Stars } from "../Reviews";
 import { useWish } from "../store";
+import StorefrontEditor, { planDate } from "../StorefrontEditor";
 
-const TABS = ["Обзор", "Мои объявления", "Избранное", "Отзывы", "Настройки"] as const;
+const TABS = ["Обзор", "Витрина", "Мои объявления", "Избранное", "Отзывы", "Настройки"] as const;
 type Tab = (typeof TABS)[number];
 
 export default function Profile() {
@@ -22,6 +23,8 @@ export default function Profile() {
 
   if (!user) return null;
 
+  // Вкладка «Витрина» есть только на платных тарифах.
+  const tabs = TABS.filter((t) => t !== "Витрина" || user.plan.storefront);
   const myItems = mine?.items ?? [];
   const savedItems = saved?.items ?? [];
 
@@ -49,7 +52,10 @@ export default function Profile() {
         <div className="md:col-span-8 flex items-center gap-6">
           <div className="flex items-center justify-center font-display" style={{ width: 96, height: 96, borderRadius: "50%", background: "#1f2320", color: "#efe8da", fontSize: 44, flexShrink: 0 }}>{user.initial}</div>
           <div>
-            <span className="mono-label" style={{ color: "#1f232099" }}>На Клауд с {user.since} · {user.city}</span>
+            <span className="mono-label flex items-center gap-2 flex-wrap" style={{ color: "#1f232099" }}>
+              На Клауд с {user.since} · {user.city}
+              <PlanBadge plan={user.plan} />
+            </span>
             <h1 className="font-display mt-2" style={{ fontSize: "clamp(34px,5vw,64px)", fontWeight: 800, lineHeight: 0.9, letterSpacing: "-0.03em" }}>{user.name}</h1>
           </div>
         </div>
@@ -61,7 +67,7 @@ export default function Profile() {
 
       {/* Tabs */}
       <div className="flex gap-6 overflow-x-auto" style={{ borderBottom: "1px solid #1f232022" }}>
-        {TABS.map((t) => (
+        {tabs.map((t) => (
           <button key={t} onClick={() => setTab(t)} className="mono-label" style={{ background: "none", border: "none", cursor: "pointer", color: tab === t ? "#1f2320" : "#1f232099", padding: "16px 0", borderBottom: "2px solid " + (tab === t ? "#1f2320" : "transparent"), whiteSpace: "nowrap", marginBottom: -1 }}>
             {t}{t === "Избранное" && stats?.saved ? ` · ${stats.saved}` : ""}
             {t === "Отзывы" && pending?.length ? ` · ${pending.length}` : ""}
@@ -72,6 +78,39 @@ export default function Profile() {
       {/* ── OVERVIEW ── */}
       {tab === "Обзор" && (
         <div className="py-8">
+          {user.plan.storefront && (
+            <div className="flex items-center justify-between gap-5 flex-wrap mb-10" style={{ background: "#1f2320", color: "#efe8da", borderRadius: 18, padding: "clamp(20px,3vw,30px)" }}>
+              <div>
+                <span className="mono-label" style={{ color: "#efe8daaa" }}>
+                  ✳ Тариф «{user.plan.label}»
+                  {planDate(user.plan.until) ? ` · активен до ${planDate(user.plan.until)}` : ""}
+                </span>
+                <p className="font-display m-0 mt-3" style={{ fontSize: "clamp(22px,3vw,34px)", fontWeight: 800, letterSpacing: "-0.02em", lineHeight: 1.05 }}>
+                  {user.plan.key === "edition"
+                    ? "Ваше издание ведёт полосу на главной Клауд"
+                    : "Ваш магазин оформлен как полоса бренда"}
+                </p>
+              </div>
+              <div className="flex gap-3 flex-wrap">
+                <button onClick={() => setTab("Витрина")} className="mono-label" style={{ border: "1px solid #efe8da44", background: "transparent", color: "#efe8da", borderRadius: 999, padding: "14px 26px", cursor: "pointer" }}>
+                  Настроить витрину →
+                </button>
+                {user.plan.key === "edition" && (
+                  <Link to={`/publisher/${user.id}`} className="mono-label" style={{ background: "#efe8da", color: "#1f2320", borderRadius: 999, padding: "14px 26px", textDecoration: "none" }}>
+                    Кабинет издателя →
+                  </Link>
+                )}
+              </div>
+            </div>
+          )}
+
+          {user.plan.expired && (
+            <p className="mono-label mb-10" style={{ color: "#a33", background: "#f6f0e3", border: "1px solid #1f232022", borderRadius: 12, padding: "14px 16px" }}>
+              Срок тарифа истёк — магазин показывается как обычная страница продавца.
+              Оформление сохранено, обратитесь к администрации для продления.
+            </p>
+          )}
+
           <div className="grid grid-cols-2 md:grid-cols-4 gap-px mb-10" style={{ background: "#1f232022", border: "1px solid #1f232022", borderRadius: 16, overflow: "hidden" }}>
             {STATS.map((s) => (
               <div key={s.k} className="p-6" style={{ background: "#f6f0e3" }}>
@@ -111,6 +150,9 @@ export default function Profile() {
           />
         </div>
       )}
+
+      {/* ── STOREFRONT ── */}
+      {tab === "Витрина" && <StorefrontEditor />}
 
       {/* ── MY LISTINGS ── */}
       {tab === "Мои объявления" && (
@@ -448,6 +490,27 @@ const smallBtn = (primary: boolean) =>
     padding: "9px 16px",
     cursor: "pointer",
   }) as const;
+
+/** Тариф рядом с городом: «Полка» — приглушённо, платные — заметно. */
+function PlanBadge({ plan }: { plan: ProfileUser["plan"] }) {
+  const paid = plan.storefront;
+  return (
+    <span
+      className="mono-label"
+      style={{
+        background: paid ? "#1f2320" : "transparent",
+        color: paid ? "#efe8da" : "#1f232099",
+        border: paid ? "none" : "1px solid #1f232033",
+        borderRadius: 999,
+        padding: "4px 12px",
+        whiteSpace: "nowrap",
+      }}
+      title={plan.expired ? "Срок тарифа истёк" : undefined}
+    >
+      {paid ? "✳ " : ""}{plan.label}
+    </span>
+  );
+}
 
 function Settings({ user }: { user: ProfileUser }) {
   const { setUser } = useAuth();

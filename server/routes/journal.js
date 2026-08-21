@@ -25,7 +25,7 @@ const isStaff = (req) => hasRole(req.user, "moderator");
 
 // ── Чтение ──
 
-articlesRouter.get("/", (req, res) => {
+articlesRouter.get("/", async (req, res) => {
   const limit = Math.min(50, Number(req.query.limit) || 20);
   const where = [];
   const params = [];
@@ -46,27 +46,27 @@ articlesRouter.get("/", (req, res) => {
                ORDER BY published_at DESC LIMIT ?`;
 
   res.json({
-    items: all(sql, ...params, limit).map(S.article),
-    rubrics: all(
+    items: (await all(sql, ...params, limit)).map(S.article),
+    rubrics: (await all(
       `SELECT DISTINCT rubric FROM articles${isStaff(req) ? "" : " WHERE status = 'published'"}
         ORDER BY rubric`,
-    ).map((r) => r.rubric),
+    )).map((r) => r.rubric),
     suggestedRubrics: RUBRICS,
     canEdit: isStaff(req),
-    drafts: isStaff(req) ? get("SELECT COUNT(*) AS c FROM articles WHERE status = 'draft'").c : 0,
+    drafts: isStaff(req) ? (await get("SELECT COUNT(*) AS c FROM articles WHERE status = 'draft'")).c : 0,
   });
 });
 
-articlesRouter.get("/:slug", (req, res) => {
-  const row = get("SELECT * FROM articles WHERE slug = ?", req.params.slug);
+articlesRouter.get("/:slug", async (req, res) => {
+  const row = await get("SELECT * FROM articles WHERE slug = ?", req.params.slug);
   // Черновик для постороннего не существует.
   if (!row || (row.status === "draft" && !isStaff(req))) throw notFound("Материал не найден");
 
-  const more = all(
+  const more = (await all(
     `SELECT * FROM articles WHERE slug != ? AND status = 'published'
       ORDER BY published_at DESC LIMIT 3`,
     req.params.slug,
-  ).map(S.article);
+  )).map(S.article);
 
   res.json({ article: S.article(row), more, canEdit: isStaff(req) });
 });
@@ -74,11 +74,11 @@ articlesRouter.get("/:slug", (req, res) => {
 // ── Редакция: роль moderator или admin ──
 
 /** Свободный адрес материала: «Как продать» → kak-prodat, kak-prodat-2, … */
-function uniqueSlug(title) {
+async function uniqueSlug(title) {
   const base = slugify(title).slice(0, 60) || "material";
   let candidate = base;
   let i = 2;
-  while (get("SELECT 1 AS x FROM articles WHERE slug = ?", candidate)) {
+  while (await get("SELECT 1 AS x FROM articles WHERE slug = ?", candidate)) {
     candidate = `${base}-${i++}`;
   }
   return candidate;
@@ -104,7 +104,7 @@ function articleInput(body, { required = false } = {}) {
 articlesRouter.post(
   "/",
   requireRole("moderator"),
-  wrap((req, res) => {
+  wrap(async (req, res) => {
     const input = articleInput(req.body, { required: true });
     const blocks = parseBlocks(req.body?.body ?? []);
 
@@ -112,14 +112,14 @@ articlesRouter.post(
       throw badRequest("Материал не может быть пустым", { body: "Добавьте хотя бы один блок" });
     }
 
-    const slug = uniqueSlug(input.title);
+    const slug = await uniqueSlug(input.title);
     const status = input.status ?? "published";
 
-    tx(() => {
-      run(
+    await tx(async () => {
+      await run(
         `INSERT INTO articles
            (slug, rubric, title, excerpt, author, author_id, date, read, img, body, status, published_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, now_utc(), now_utc())`,
         slug,
         input.rubric,
         input.title,
@@ -132,14 +132,14 @@ articlesRouter.post(
         JSON.stringify(blocks),
         status,
       );
-      logAction(
+      await logAction(
         req.user.id,
         status === "draft" ? "article.draft" : "article.publish",
         "article", 0, null, input.title,
       );
     });
 
-    res.status(201).json({ article: S.article(get("SELECT * FROM articles WHERE slug = ?", slug)) });
+    res.status(201).json({ article: S.article(await get("SELECT * FROM articles WHERE slug = ?", slug)) });
   }),
 );
 
@@ -147,8 +147,8 @@ articlesRouter.post(
 articlesRouter.patch(
   "/:slug",
   requireRole("moderator"),
-  wrap((req, res) => {
-    const existing = get("SELECT * FROM articles WHERE slug = ?", req.params.slug);
+  wrap(async (req, res) => {
+    const existing = await get("SELECT * FROM articles WHERE slug = ?", req.params.slug);
     if (!existing) throw notFound("Материал не найден");
 
     const input = articleInput(req.body);
@@ -176,16 +176,16 @@ articlesRouter.patch(
     const keys = Object.keys(updates);
     if (!keys.length) throw badRequest("Нечего сохранять");
 
-    tx(() => {
-      run(
-        `UPDATE articles SET ${keys.map((k) => `${k} = ?`).join(", ")}, updated_at = datetime('now')
+    await tx(async () => {
+      await run(
+        `UPDATE articles SET ${keys.map((k) => `${k} = ?`).join(", ")}, updated_at = now_utc()
           WHERE slug = ?`,
         ...keys.map((k) => updates[k]), existing.slug,
       );
-      logAction(req.user.id, "article.edit", "article", 0, null, updates.title ?? existing.title);
+      await logAction(req.user.id, "article.edit", "article", 0, null, updates.title ?? existing.title);
     });
 
-    res.json({ article: S.article(get("SELECT * FROM articles WHERE slug = ?", existing.slug)) });
+    res.json({ article: S.article(await get("SELECT * FROM articles WHERE slug = ?", existing.slug)) });
   }),
 );
 
@@ -193,13 +193,13 @@ articlesRouter.patch(
 articlesRouter.delete(
   "/:slug",
   requireRole("moderator"),
-  wrap((req, res) => {
-    const existing = get("SELECT * FROM articles WHERE slug = ?", req.params.slug);
+  wrap(async (req, res) => {
+    const existing = await get("SELECT * FROM articles WHERE slug = ?", req.params.slug);
     if (!existing) throw notFound("Материал не найден");
 
-    tx(() => {
-      run("DELETE FROM articles WHERE slug = ?", existing.slug);
-      logAction(req.user.id, "article.delete", "article", 0, null, existing.title);
+    await tx(async () => {
+      await run("DELETE FROM articles WHERE slug = ?", existing.slug);
+      await logAction(req.user.id, "article.delete", "article", 0, null, existing.title);
     });
 
     res.json({ ok: true, slug: existing.slug });

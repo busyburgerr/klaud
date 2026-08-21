@@ -2,15 +2,18 @@ import { useState } from "react";
 import { Link, useNavigate } from "react-router";
 import api from "../api";
 import { useAsync } from "../hooks";
-import { EmptyState, LotGrid, Rule } from "../components";
+import { EmptyState, LotCard, LotGrid, Rule } from "../components";
+import { searchTarget } from "../search";
 
 export default function Home() {
   const [search, setSearch] = useState("");
+  const [searching, setSearching] = useState(false);
   const [activeCat, setActiveCat] = useState<string | null>(null);
   const navigate = useNavigate();
 
   const { data: categories } = useAsync(() => api.categories(), []);
   const { data: meta } = useAsync(() => api.meta(), []);
+  const { data: strip } = useAsync(() => api.publisherStrip(), []);
   const { data: lots, loading } = useAsync(
     () => api.listings({ limit: 8, cat: activeCat ?? undefined }),
     [activeCat],
@@ -20,10 +23,15 @@ export default function Home() {
   // Пока лотов нет, звать «смотреть все 0 лотов» не имеет смысла.
   const totalLabel = meta?.stats.listings ? meta.stats.listingsLabel : "";
 
-  const submitSearch = (e: React.FormEvent) => {
+  const submitSearch = async (e: React.FormEvent) => {
     e.preventDefault();
-    const q = search.trim();
-    navigate(q ? `/catalog?q=${encodeURIComponent(q)}` : "/catalog");
+    if (searching) return;
+    setSearching(true);
+    try {
+      navigate(await searchTarget(search));
+    } finally {
+      setSearching(false);
+    }
   };
 
   return (
@@ -48,10 +56,10 @@ export default function Home() {
         <form className="flex flex-col md:flex-row items-stretch gap-3" onSubmit={submitSearch}>
           <div className="flex-1 flex items-center gap-3 px-5" style={{ border: "1px solid #1f2320", borderRadius: 18, background: "#f6f0e3" }}>
             <svg width="18" height="18" viewBox="0 0 20 20" fill="none"><circle cx="8.5" cy="8.5" r="5.5" stroke="#1f2320" strokeWidth="1.6"/><path d="M13.5 13.5L18 18" stroke="#1f2320" strokeWidth="1.6" strokeLinecap="round"/></svg>
-            <input type="search" placeholder="Найти лот, марку или бренд..." value={search} onChange={(e) => setSearch(e.target.value)} aria-label="Поиск по каталогу" className="flex-1 py-4 outline-none" style={{ border: "none", background: "none", color: "#1f2320", fontFamily: "'JetBrains Mono', monospace", fontSize: 13, letterSpacing: "0.02em" }} />
+            <input type="search" placeholder="Название, бренд или номер лота — 0442" value={search} onChange={(e) => setSearch(e.target.value)} aria-label="Поиск по каталогу" className="flex-1 py-4 outline-none" style={{ border: "none", background: "none", color: "#1f2320", fontFamily: "'JetBrains Mono', monospace", fontSize: 13, letterSpacing: "0.02em" }} />
           </div>
           <button type="submit" className="mono-label" style={{ background: "#1f2320", color: "#efe8da", borderRadius: 18, padding: "0 40px", border: "none", cursor: "pointer", minHeight: 56 }}>
-            Искать по каталогу
+            {searching ? "Ищем…" : "Искать по каталогу"}
           </button>
         </form>
         <div className="flex flex-wrap gap-2 mt-3">
@@ -72,6 +80,57 @@ export default function Home() {
           ))}
         </div>
       </section>
+
+      {/* ПОЛОСА ИЗДАТЕЛЯ — тариф «Издание» */}
+      {strip?.publisher && strip.items.length > 0 && (
+        <section className="py-4">
+          <div className="grid lg:grid-cols-12 gap-px" style={{ background: "#1f2320", borderRadius: 22, overflow: "hidden" }}>
+            {/* Обложка издания */}
+            <div className="lg:col-span-4 relative flex flex-col justify-between" style={{ minHeight: 300, padding: "clamp(22px,3vw,32px)" }}>
+              {strip.publisher.cover && (
+                <img
+                  src={strip.publisher.cover}
+                  alt=""
+                  style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", filter: "grayscale(1) brightness(0.45)" }}
+                />
+              )}
+              <div className="relative flex items-center justify-between gap-3 flex-wrap">
+                <span className="mono-label" style={{ background: "#efe8da", color: "#1f2320", borderRadius: 999, padding: "6px 14px" }}>
+                  ✳ Полоса издателя
+                </span>
+                <span className="mono-label" style={{ color: "#efe8da99" }}>Изд. № {meta?.issue ?? ""}</span>
+              </div>
+              <div className="relative">
+                <span className="mono-label" style={{ color: "#efe8da99" }}>
+                  На Клауд с {strip.publisher.since} · {strip.publisher.shops} витрины
+                </span>
+                <h2 className="font-display m-0 mt-4" style={{ fontSize: "clamp(30px,3.6vw,46px)", fontWeight: 800, letterSpacing: "-0.03em", lineHeight: 0.95, color: "#efe8da" }}>
+                  {strip.publisher.brand}
+                </h2>
+                {strip.publisher.tagline && (
+                  <p className="font-display m-0 mt-3" style={{ fontSize: "clamp(15px,1.6vw,19px)", fontStyle: "italic", lineHeight: 1.3, color: "#efe8dacc", maxWidth: 340 }}>
+                    {strip.publisher.tagline}
+                  </p>
+                )}
+                <Link to={`/publisher/${strip.publisher.id}`} className="mono-label inline-block mt-6" style={{ border: "1px solid #efe8da55", color: "#efe8da", borderRadius: 999, padding: "13px 24px", textDecoration: "none" }}>
+                  К витринам издателя →
+                </Link>
+              </div>
+            </div>
+
+            {/* Подборка издания */}
+            <div className="lg:col-span-8" style={{ background: "#1f2320", padding: "clamp(20px,2.4vw,28px)" }}>
+              <div className="flex items-center justify-between gap-3 flex-wrap mb-5">
+                <span className="mono-label" style={{ color: "#efe8da99" }}>Выбор издания</span>
+                <span className="mono-label" style={{ color: "#efe8da99" }}>{strip.items.length} лота</span>
+              </div>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                {strip.items.map((item) => <LotCard key={item.id} item={item} />)}
+              </div>
+            </div>
+          </div>
+        </section>
+      )}
 
       {/* CATEGORY INDEX */}
       <section className="py-12 md:py-16 grid md:grid-cols-12 gap-8">

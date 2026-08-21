@@ -4,15 +4,16 @@ import os from "node:os";
 import path from "node:path";
 import { after, before, describe, it } from "node:test";
 
-// Изолированная база на время прогона — до импорта модулей, читающих config.
-const tmpDb = path.join(os.tmpdir(), `cloud-test-${process.pid}.db`);
-process.env.DB_FILE = tmpDb;
+// Изолированная схема в тестовой базе — до импорта модулей, читающих config.
+process.env.DATABASE_URL = process.env.TEST_DATABASE_URL
+  || "postgres://cloud:cloud@127.0.0.1:5432/cloud_test";
+process.env.DB_SCHEMA = "test_api";
 process.env.JWT_SECRET = "test-secret";
 process.env.UPLOADS_DIR = path.join(os.tmpdir(), `cloud-test-uploads-${process.pid}`);
 process.env.RATE_LIMIT = "off";
 
 const { createApp } = await import("../app.js");
-const { close } = await import("../db/index.js");
+const { close, exec } = await import("../db/index.js");
 const { seed, DEMO_PASSWORD } = await import("../db/seed.js");
 
 let server;
@@ -33,7 +34,9 @@ async function api(method, url, { body, token } = {}) {
 }
 
 before(async () => {
-  seed({ force: true });
+  // Каждый прогон начинается с пустой схемы.
+  await exec(`DROP SCHEMA IF EXISTS "${process.env.DB_SCHEMA}" CASCADE`);
+  await seed({ force: true });
   server = createApp().listen(0);
   await new Promise((resolve) => server.once("listening", resolve));
   base = `http://127.0.0.1:${server.address().port}`;
@@ -41,8 +44,8 @@ before(async () => {
 
 after(async () => {
   await new Promise((resolve) => server.close(resolve));
-  close();
-  for (const f of [tmpDb, `${tmpDb}-wal`, `${tmpDb}-shm`]) fs.rmSync(f, { force: true });
+  await exec(`DROP SCHEMA IF EXISTS "${process.env.DB_SCHEMA}" CASCADE`);
+  await close();
   fs.rmSync(process.env.UPLOADS_DIR, { recursive: true, force: true });
 });
 
@@ -95,6 +98,55 @@ describe("каталог", () => {
     const { body } = await api("GET", "/api/listings?q=iPhone");
     assert.equal(body.total, 1);
     assert.match(body.items[0].title, /iPhone/);
+  });
+
+  it("ищет по номеру лота в любом написании", async () => {
+    const any = (await api("GET", "/api/listings?limit=1")).body.items[0];
+    const digits = any.lot.replace(/^0+/, "");
+
+    for (const q of [any.lot, digits, `лот ${digits}`, `№${any.lot}`, `#${digits}`]) {
+      const found = await api("GET", `/api/listings?q=${encodeURIComponent(q)}`);
+      assert.equal(found.status, 200);
+      assert.equal(found.body.items[0]?.lot, any.lot, `запрос «${q}»`);
+    }
+  });
+
+  it("отдаёт лот по номеру отдельным маршрутом", async () => {
+    const any = (await api("GET", "/api/listings?limit=1")).body.items[0];
+
+    const exact = await api("GET", `/api/listings/by-lot/${any.lot}`);
+    assert.equal(exact.status, 200);
+    assert.equal(exact.body.listing.id, any.id);
+
+    // Номер без ведущих нулей — тот же лот.
+    const short = await api("GET", `/api/listings/by-lot/${any.lot.replace(/^0+/, "")}`);
+    assert.equal(short.body.listing.id, any.id);
+
+    assert.equal((await api("GET", "/api/listings/by-lot/9999")).status, 404);
+    assert.equal((await api("GET", "/api/listings/by-lot/абв")).status, 404);
+  });
+
+  it("ставит точное совпадение по номеру первым", async () => {
+    const any = (await api("GET", "/api/listings?limit=1")).body.items[0];
+    const digits = any.lot.replace(/^0+/, "");
+
+    // Дешёвый лот с номером в названии не должен обойти сам лот даже при
+    // сортировке по цене.
+    const token = await login();
+    const created = await api("POST", "/api/listings", {
+      token,
+      body: { title: `Каталожная карточка ${any.lot} на память`, price: 100, cat: "home", cond: "Новое" },
+    });
+    await api("POST", `/api/moderation/listings/${created.body.listing.id}/approve`, {
+      token: await login("9000000002"),
+    });
+
+    const found = await api("GET", `/api/listings?q=${digits}&sort=price_asc`);
+    assert.ok(found.body.total >= 2, "нашлись оба лота");
+    assert.equal(found.body.items[0].lot, any.lot, "первым идёт лот с этим номером");
+
+    // Убираем за собой: дальше идут проверки, считающие лоты каталога.
+    await api("DELETE", `/api/listings/${created.body.listing.id}`, { token });
   });
 
   it("листает постранично", async () => {

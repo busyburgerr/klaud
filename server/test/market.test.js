@@ -4,14 +4,16 @@ import os from "node:os";
 import path from "node:path";
 import { after, before, describe, it } from "node:test";
 
-const tmpDb = path.join(os.tmpdir(), `cloud-market-${process.pid}.db`);
-process.env.DB_FILE = tmpDb;
+// Изолированная схема в тестовой базе — до импорта модулей, читающих config.
+process.env.DATABASE_URL = process.env.TEST_DATABASE_URL
+  || "postgres://cloud:cloud@127.0.0.1:5432/cloud_test";
+process.env.DB_SCHEMA = "test_market";
 process.env.JWT_SECRET = "test-secret";
 process.env.UPLOADS_DIR = path.join(os.tmpdir(), `cloud-market-uploads-${process.pid}`);
 process.env.RATE_LIMIT = "off";
 
 const { createApp } = await import("../app.js");
-const { close } = await import("../db/index.js");
+const { close, exec } = await import("../db/index.js");
 const { seed, DEMO_PASSWORD } = await import("../db/seed.js");
 const { fillCatalog } = await import("../db/fill-catalog.js");
 const { CATALOG_LISTINGS } = await import("../db/catalog-data.js");
@@ -56,7 +58,9 @@ async function publish(sellerToken, over = {}) {
 }
 
 before(async () => {
-  seed({ force: true });
+  // Каждый прогон начинается с пустой схемы.
+  await exec(`DROP SCHEMA IF EXISTS "${process.env.DB_SCHEMA}" CASCADE`);
+  await seed({ force: true });
   server = createApp().listen(0);
   await new Promise((resolve) => server.once("listening", resolve));
   base = `http://127.0.0.1:${server.address().port}`;
@@ -64,8 +68,8 @@ before(async () => {
 
 after(async () => {
   await new Promise((resolve) => server.close(resolve));
-  close();
-  for (const f of [tmpDb, `${tmpDb}-wal`, `${tmpDb}-shm`]) fs.rmSync(f, { force: true });
+  await exec(`DROP SCHEMA IF EXISTS "${process.env.DB_SCHEMA}" CASCADE`);
+  await close();
   fs.rmSync(process.env.UPLOADS_DIR, { recursive: true, force: true });
 });
 
@@ -363,7 +367,7 @@ describe("о проекте", () => {
 
 describe("наполнение каталога", () => {
   it("заполняет все десять разделов", async () => {
-    fillCatalog();
+    await fillCatalog();
 
     const categories = (await api("GET", "/api/categories")).body.items;
     assert.equal(categories.length, 10);
@@ -391,7 +395,7 @@ describe("наполнение каталога", () => {
 
   it("не дублирует лоты при повторном запуске", async () => {
     const before = (await api("GET", "/api/listings?limit=100")).body.total;
-    const result = fillCatalog();
+    const result = await fillCatalog();
     const after = (await api("GET", "/api/listings?limit=100")).body.total;
 
     assert.equal(result.added, 0);
@@ -406,5 +410,354 @@ describe("наполнение каталога", () => {
     const reviews = await api("GET", "/api/reviews/user/dmitry-r");
     assert.ok(reviews.body.summary.total >= 1, "о продавце есть отзыв");
     assert.match(reviews.body.summary.rating, /^\d\.\d$/);
+  });
+});
+
+describe("тарифы и витрина", () => {
+  it("по умолчанию продавец на «Полке», витрина закрыта", async () => {
+    const token = await login("seller");
+    const me = await api("GET", "/api/auth/me", { token });
+
+    assert.equal(me.body.user.plan.key, "shelf");
+    assert.equal(me.body.user.plan.storefront, false);
+    assert.equal((await api("GET", "/api/profile/storefront", { token })).status, 403);
+    assert.equal((await api("GET", `/api/shops/${me.body.user.id}`)).status, 404);
+  });
+
+  it("администратор назначает тариф, продавец настраивает витрину", async () => {
+    const admin = await login("admin");
+    const token = await login("seller");
+    const me = (await api("GET", "/api/auth/me", { token })).body.user;
+
+    const assigned = await api("PATCH", `/api/admin/users/${me.userId}/plan`, {
+      token: admin, body: { plan: "storefront", months: 6 },
+    });
+    assert.equal(assigned.status, 200);
+    assert.equal(assigned.body.user.planKey, "storefront");
+
+    const after = (await api("GET", "/api/auth/me", { token })).body.user;
+    assert.equal(after.plan.key, "storefront");
+    assert.ok(after.plan.storefront, "витрина стала доступна");
+    assert.ok(after.plan.until, "срок тарифа проставлен");
+
+    const saved = await api("PUT", "/api/profile/storefront", {
+      token,
+      body: {
+        brand: "Мастерская Клауд", tagline: "Вещи с историей", cover: "", about: "Небольшой магазин.",
+        hours: "Ежедневно · 10:00–20:00", delivery: "Курьер по РФ", warranty: "Возврат 7 дней",
+        links: [{ network: "Telegram", handle: "@shop", url: "https://t.me/shop" }],
+        sections: [],
+      },
+    });
+    assert.equal(saved.status, 200);
+
+    const shop = await api("GET", `/api/shops/${me.id}`);
+    assert.equal(shop.status, 200);
+    assert.equal(shop.body.storefront.brand, "Мастерская Клауд");
+    assert.equal(shop.body.storefront.conditions.delivery, "Курьер по РФ");
+    assert.equal(shop.body.storefront.links.length, 1);
+    assert.equal(shop.body.sections.length, 0, "разделы — только на «Издании»");
+    assert.ok(shop.body.total > 0, "лоты продавца показываются на витрине");
+  });
+
+  it("проверяет ссылки и лимиты тарифа", async () => {
+    const token = await login("seller");
+    const base = {
+      brand: "Мастерская Клауд", tagline: "", cover: "", about: "",
+      hours: "", delivery: "", warranty: "", links: [], sections: [],
+    };
+
+    const badUrl = await api("PUT", "/api/profile/storefront", {
+      token, body: { ...base, links: [{ network: "Telegram", handle: "@s", url: "t.me/s" }] },
+    });
+    assert.equal(badUrl.status, 400);
+
+    const sections = await api("PUT", "/api/profile/storefront", {
+      token, body: { ...base, sections: [{ title: "Раздел", blurb: "", cat: "home" }] },
+    });
+    assert.equal(sections.status, 400, "на «Витрине» разделов нет");
+
+    const short = await api("PUT", "/api/profile/storefront", { token, body: { ...base, brand: "К" } });
+    assert.equal(short.status, 400, "название бренда короче двух знаков");
+  });
+
+  it("«Издание» раскладывает лоты по разделам", async () => {
+    const admin = await login("admin");
+    const token = await login("seller");
+    const me = (await api("GET", "/api/auth/me", { token })).body.user;
+
+    await api("PATCH", `/api/admin/users/${me.userId}/plan`, {
+      token: admin, body: { plan: "edition", months: 12 },
+    });
+
+    const saved = await api("PUT", "/api/profile/storefront", {
+      token,
+      body: {
+        brand: "Мастерская Клауд", tagline: "", cover: "", about: "",
+        hours: "", delivery: "", warranty: "", links: [],
+        sections: [{ title: "Для дома", blurb: "Мебель и утварь", cat: "home" }],
+      },
+    });
+    assert.equal(saved.status, 200);
+
+    const shop = await api("GET", `/api/shops/${me.id}`);
+    assert.equal(shop.body.sections.length > 0, true);
+    assert.equal(shop.body.sections[0].title, "Для дома");
+    assert.ok(shop.body.sections[0].items.length > 0, "в разделе есть лоты");
+    assert.ok(
+      shop.body.sections[0].items.every((l) => l.cat === "home"),
+      "в раздел попадают лоты его категории",
+    );
+  });
+
+  it("после возврата на «Полку» витрина скрывается, оформление остаётся", async () => {
+    const admin = await login("admin");
+    const token = await login("seller");
+    const me = (await api("GET", "/api/auth/me", { token })).body.user;
+
+    await api("PATCH", `/api/admin/users/${me.userId}/plan`, { token: admin, body: { plan: "shelf" } });
+
+    assert.equal((await api("GET", `/api/shops/${me.id}`)).status, 404);
+    assert.equal((await api("GET", "/api/profile/storefront", { token })).status, 403);
+
+    // Оформление не стёрлось: возвращаем тариф и проверяем, что бренд на месте.
+    await api("PATCH", `/api/admin/users/${me.userId}/plan`, {
+      token: admin, body: { plan: "storefront", months: 1 },
+    });
+    const back = await api("GET", "/api/profile/storefront", { token });
+    assert.equal(back.body.storefront.brand, "Мастерская Клауд");
+  });
+
+  it("отдаёт справочник тарифов", async () => {
+    const plans = await api("GET", "/api/plans");
+    assert.equal(plans.status, 200);
+    assert.deepEqual(plans.body.items.map((p) => p.key), ["shelf", "storefront", "edition"]);
+    assert.equal(plans.body.items[0].storefront, false);
+    assert.equal(plans.body.items[2].maxSections, 6);
+  });
+});
+
+describe("издательский дом", () => {
+  it("кабинет издателя закрыт на «Витрине»", async () => {
+    const admin = await login("admin");
+    const token = await login("seller");
+    const me = (await api("GET", "/api/auth/me", { token })).body.user;
+
+    await api("PATCH", `/api/admin/users/${me.userId}/plan`, {
+      token: admin, body: { plan: "storefront", months: 6 },
+    });
+
+    assert.equal((await api("GET", "/api/profile/publisher", { token })).status, 403);
+    assert.equal((await api("GET", `/api/publishers/${me.id}`)).status, 404);
+  });
+
+  it("на «Издании» открывается кабинет и страница дома", async () => {
+    const admin = await login("admin");
+    const token = await login("seller");
+    const me = (await api("GET", "/api/auth/me", { token })).body.user;
+
+    await api("PATCH", `/api/admin/users/${me.userId}/plan`, {
+      token: admin, body: { plan: "edition", months: 12 },
+    });
+
+    const cabinet = await api("GET", "/api/profile/publisher", { token });
+    assert.equal(cabinet.status, 200);
+    assert.equal(cabinet.body.trend.length, 14, "график за две недели");
+    assert.ok(cabinet.body.metrics.lots >= 0);
+
+    const page = await api("GET", `/api/publishers/${me.id}`);
+    assert.equal(page.status, 200);
+    assert.equal(page.body.publisher.plan.key, "edition");
+  });
+
+  it("администратор собирает витрины под одной обложкой", async () => {
+    const admin = await login("admin");
+    const publisher = (await api("GET", "/api/auth/me", { token: await login("seller") })).body.user;
+    const member = (await api("GET", "/api/auth/me", { token: await login("user") })).body.user;
+
+    const joined = await api("PATCH", `/api/admin/users/${member.userId}/publisher`, {
+      token: admin, body: { publisherId: publisher.userId },
+    });
+    assert.equal(joined.status, 200);
+    assert.equal(joined.body.user.publisherId, publisher.userId);
+
+    const page = await api("GET", `/api/publishers/${publisher.id}`);
+    assert.ok(page.body.shops.some((s) => s.id === member.id), "витрина под обложкой");
+    assert.ok(page.body.stats.shops >= 1);
+
+    // Витрина принадлежит одному изданию — связь снимается.
+    const left = await api("PATCH", `/api/admin/users/${member.userId}/publisher`, {
+      token: admin, body: { publisherId: null },
+    });
+    assert.equal(left.body.user.publisherId, null);
+
+    await api("PATCH", `/api/admin/users/${member.userId}/publisher`, {
+      token: admin, body: { publisherId: publisher.userId },
+    });
+  });
+
+  it("издатель собирает полосу, и она попадает на главную", async () => {
+    const token = await login("seller");
+    const cabinet = await api("GET", "/api/profile/publisher", { token });
+    const ids = cabinet.body.candidates.slice(0, 2).map((l) => l.id);
+    assert.ok(ids.length, "есть из чего собирать полосу");
+
+    const saved = await api("PUT", "/api/profile/publisher/picks", { token, body: { listingIds: ids } });
+    assert.equal(saved.status, 200);
+    assert.deepEqual(saved.body.picks.map((l) => l.id), ids);
+
+    const strip = await api("GET", "/api/publishers/featured");
+    assert.equal(strip.status, 200);
+    assert.deepEqual(strip.body.items.map((l) => l.id), ids);
+    assert.ok(strip.body.publisher.brand);
+  });
+
+  it("на полосу нельзя поставить чужой лот и больше лимита", async () => {
+    const token = await login("seller");
+    const foreign = (await api("GET", "/api/listings?limit=100")).body.items
+      .find((l) => l.seller && l.seller.id !== "artem-v" && l.seller.plan.key === "shelf");
+
+    if (foreign) {
+      const bad = await api("PUT", "/api/profile/publisher/picks", {
+        token, body: { listingIds: [foreign.id] },
+      });
+      assert.equal(bad.status, 400, "чужой лот на полосу не попадает");
+    }
+
+    const many = await api("PUT", "/api/profile/publisher/picks", {
+      token, body: { listingIds: [1, 2, 3, 4, 5, 6, 7] },
+    });
+    assert.equal(many.status, 400, "лимит полосы");
+  });
+
+  it("принимает каталог таблицей и отклоняет битые строки", async () => {
+    const token = await login("seller");
+    const csv = [
+      "title;price;cat;cond;location;description;image",
+      "Кресло-качалка из ротанга;18500;home;Хорошее;Москва;Плетёное кресло;https://example.test/1.jpg",
+      "Пустая цена;;home;Хорошее;Москва;;https://example.test/2.jpg",
+      "Раздел не найден;5000;не-раздел;Хорошее;Москва;;https://example.test/3.jpg",
+      "Торшер латунный винтажный;7400;home;Отличное;Москва;Работает;https://example.test/4.jpg",
+    ].join("\n");
+
+    const report = await api("POST", "/api/profile/publisher/import", { token, body: { csv } });
+    assert.equal(report.status, 201);
+    assert.equal(report.body.created, 2);
+    assert.equal(report.body.rejected, 2);
+    assert.ok(report.body.log.some((l) => !l.ok), "в отчёте есть строки с ошибками");
+
+    // Загруженные лоты ждут проверку модератора, а не публикуются сразу.
+    const queue = await api("GET", "/api/moderation/queue?status=pending", { token: await login("moderator") });
+    assert.ok(queue.body.items.some((l) => l.title === "Торшер латунный винтажный"));
+  });
+
+  it("отклоняет таблицу без нужных колонок", async () => {
+    const token = await login("seller");
+    const bad = await api("POST", "/api/profile/publisher/import", {
+      token, body: { csv: "название;цена\nСтул;1000" },
+    });
+    assert.equal(bad.status, 400);
+  });
+});
+
+describe("витрины под обложкой издания", () => {
+  it("издатель зовёт витрину, а входит она только с согласия владельца", async () => {
+    const admin = await login("admin");
+    const publisher = await login("seller");
+    const shopToken = await login("user");
+    const shop = (await api("GET", "/api/auth/me", { token: shopToken })).body.user;
+
+    // На всякий случай начинаем с витрины вне издания.
+    await api("POST", "/api/profile/edition/leave", { token: shopToken });
+    await api("PATCH", `/api/admin/users/${shop.userId}/plan`, {
+      token: admin, body: { plan: "storefront", months: 6 },
+    });
+
+    const invited = await api("POST", "/api/profile/publisher/invites", {
+      token: publisher, body: { shop: shop.id },
+    });
+    assert.equal(invited.status, 201);
+    assert.ok(invited.body.invites.some((i) => i.id === shop.id));
+
+    // Пока приглашение не принято, витрина под обложкой не появляется.
+    const owner = (await api("GET", "/api/auth/me", { token: publisher })).body.user;
+    const before = await api("GET", `/api/publishers/${owner.id}`);
+    assert.ok(!before.body.shops.some((s) => s.id === shop.id), "чужая витрина не добавилась сама");
+
+    const seen = await api("GET", "/api/profile/edition", { token: shopToken });
+    assert.equal(seen.body.publisher, null);
+    assert.ok(seen.body.invites.some((i) => i.id === owner.id), "витрина видит приглашение");
+
+    const accepted = await api("POST", "/api/profile/edition/accept", {
+      token: shopToken, body: { publisher: owner.id },
+    });
+    assert.equal(accepted.status, 200);
+    assert.equal(accepted.body.publisher.id, owner.id);
+    assert.equal(accepted.body.invites.length, 0, "остальные приглашения снялись");
+
+    const after = await api("GET", `/api/publishers/${owner.id}`);
+    assert.ok(after.body.shops.some((s) => s.id === shop.id), "витрина под обложкой");
+  });
+
+  it("витрина выходит из издания сама", async () => {
+    const publisher = await login("seller");
+    const shopToken = await login("user");
+    const owner = (await api("GET", "/api/auth/me", { token: publisher })).body.user;
+    const shop = (await api("GET", "/api/auth/me", { token: shopToken })).body.user;
+
+    const left = await api("POST", "/api/profile/edition/leave", { token: shopToken });
+    assert.equal(left.status, 200);
+    assert.equal(left.body.publisher, null);
+
+    const page = await api("GET", `/api/publishers/${owner.id}`);
+    assert.ok(!page.body.shops.some((s) => s.id === shop.id));
+
+    // Выходить дважды нечего.
+    assert.equal((await api("POST", "/api/profile/edition/leave", { token: shopToken })).status, 400);
+  });
+
+  it("издатель убирает витрину и отзывает приглашение", async () => {
+    const publisher = await login("seller");
+    const shopToken = await login("user");
+    const owner = (await api("GET", "/api/auth/me", { token: publisher })).body.user;
+    const shop = (await api("GET", "/api/auth/me", { token: shopToken })).body.user;
+
+    await api("POST", "/api/profile/publisher/invites", { token: publisher, body: { shop: shop.id } });
+    const cancelled = await api("DELETE", `/api/profile/publisher/invites/${shop.id}`, { token: publisher });
+    assert.equal(cancelled.status, 200);
+    assert.equal(cancelled.body.invites.length, 0);
+
+    // Приглашаем снова, принимаем и убираем витрину из издания.
+    await api("POST", "/api/profile/publisher/invites", { token: publisher, body: { shop: shop.id } });
+    await api("POST", "/api/profile/edition/accept", { token: shopToken, body: { publisher: owner.id } });
+
+    const removed = await api("DELETE", `/api/profile/publisher/shops/${shop.id}`, { token: publisher });
+    assert.equal(removed.status, 200);
+    assert.ok(!removed.body.shops.some((s) => s.id === shop.id));
+    assert.equal((await api("GET", "/api/profile/edition", { token: shopToken })).body.publisher, null);
+  });
+
+  it("не зовёт витрину без тарифа и чужую из другого издания", async () => {
+    const admin = await login("admin");
+    const publisher = await login("seller");
+    const shopToken = await login("user");
+    const shop = (await api("GET", "/api/auth/me", { token: shopToken })).body.user;
+
+    await api("PATCH", `/api/admin/users/${shop.userId}/plan`, { token: admin, body: { plan: "shelf" } });
+    const noPlan = await api("POST", "/api/profile/publisher/invites", {
+      token: publisher, body: { shop: shop.id },
+    });
+    assert.equal(noPlan.status, 400, "продавца без витрины не зовут");
+
+    const unknown = await api("POST", "/api/profile/publisher/invites", {
+      token: publisher, body: { shop: "нет-такой-витрины" },
+    });
+    assert.equal(unknown.status, 400);
+
+    // Приглашать можно только со своего тарифа «Издание».
+    const outsider = await api("POST", "/api/profile/publisher/invites", {
+      token: shopToken, body: { shop: "artem-v" },
+    });
+    assert.equal(outsider.status, 403);
   });
 });

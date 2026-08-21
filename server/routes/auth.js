@@ -13,11 +13,11 @@ export const authRouter = Router();
 const limiter = rateLimit({ windowMs: 60_000, max: 15 });
 
 /** Свободный slug для страницы продавца: artem-volkov, artem-volkov-2, … */
-function uniqueSlug(name) {
+async function uniqueSlug(name) {
   const base = slugify(name);
   let candidate = base;
   let i = 2;
-  while (get("SELECT 1 AS x FROM users WHERE slug = ?", candidate)) {
+  while (await get("SELECT 1 AS x FROM users WHERE slug = ?", candidate)) {
     candidate = `${base}-${i++}`;
   }
   return candidate;
@@ -26,7 +26,7 @@ function uniqueSlug(name) {
 authRouter.post(
   "/register",
   limiter,
-  wrap((req, res) => {
+  wrap(async (req, res) => {
     const body = v(req.body)
       .str("name", { required: true, min: 2, max: 80 })
       .phone("phone")
@@ -36,16 +36,16 @@ authRouter.post(
       .done();
 
     if (!body.agree) throw badRequest("Нужно принять правила публикации", { agree: "Обязательное поле" });
-    if (get("SELECT 1 AS x FROM users WHERE phone = ?", body.phone)) {
+    if (await get("SELECT 1 AS x FROM users WHERE phone = ?", body.phone)) {
       throw conflict("Пользователь с таким номером уже зарегистрирован");
     }
 
-    run(
+    await run(
       "INSERT INTO users (slug, name, phone, password_hash, city) VALUES (?, ?, ?, ?, ?)",
-      uniqueSlug(body.name), body.name, body.phone, bcrypt.hashSync(body.password, 10), body.city,
+      await uniqueSlug(body.name), body.name, body.phone, bcrypt.hashSync(body.password, 10), body.city,
     );
 
-    const user = get("SELECT * FROM users WHERE phone = ?", body.phone);
+    const user = await get("SELECT * FROM users WHERE phone = ?", body.phone);
     const token = signToken(user.id);
     setAuthCookie(res, token);
     res.status(201).json({ token, user: privateUser(user) });
@@ -55,13 +55,13 @@ authRouter.post(
 authRouter.post(
   "/login",
   limiter,
-  wrap((req, res) => {
+  wrap(async (req, res) => {
     const body = v(req.body)
       .phone("phone")
       .str("password", { required: true, max: 100, trim: false })
       .done();
 
-    const user = get("SELECT * FROM users WHERE phone = ?", body.phone);
+    const user = await get("SELECT * FROM users WHERE phone = ?", body.phone);
     if (!user || !bcrypt.compareSync(body.password, user.password_hash)) {
       throw unauthorized("Неверный номер телефона или пароль");
     }
@@ -71,18 +71,18 @@ authRouter.post(
         : "Аккаунт заблокирован администрацией");
     }
 
-    run("UPDATE users SET last_seen_at = datetime('now') WHERE id = ?", user.id);
+    await run("UPDATE users SET last_seen_at = now_utc() WHERE id = ?", user.id);
     const token = signToken(user.id);
     setAuthCookie(res, token);
     res.json({ token, user: privateUser(user) });
   }),
 );
 
-authRouter.post("/logout", (_req, res) => {
+authRouter.post("/logout", async (_req, res) => {
   clearAuthCookie(res);
   res.json({ ok: true });
 });
 
-authRouter.get("/me", requireAuth, (req, res) => {
+authRouter.get("/me", requireAuth, async (req, res) => {
   res.json({ user: privateUser(req.user) });
 });

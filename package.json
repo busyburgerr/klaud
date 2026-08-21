@@ -8,14 +8,14 @@
     "build": "vite build",
     "preview": "vite preview",
     "format": "oxfmt",
-    "api": "node --experimental-sqlite --env-file-if-exists=.env server/index.js",
-    "api:dev": "node --experimental-sqlite --env-file-if-exists=.env --watch server/index.js",
-    "api:seed": "node --experimental-sqlite server/db/seed.js",
-    "api:test": "node --experimental-sqlite --test server/test/*.test.js",
-    "start": "node --experimental-sqlite --env-file-if-exists=.env server/start.js",
+    "api": "node --env-file-if-exists=.env server/index.js",
+    "api:dev": "node --env-file-if-exists=.env --watch server/index.js",
+    "api:seed": "node --env-file-if-exists=.env server/db/seed.js",
+    "api:test": "node --env-file-if-exists=.env.test --test server/test/*.test.js",
+    "start": "node --env-file-if-exists=.env server/start.js",
     "typecheck": "tsc --noEmit",
-    "api:reset": "node --experimental-sqlite server/db/seed.js --clean",
-    "api:catalog": "node --experimental-sqlite server/db/fill-catalog.js"
+    "api:reset": "node --env-file-if-exists=.env server/db/seed.js --clean",
+    "api:catalog": "node --env-file-if-exists=.env server/db/fill-catalog.js"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",
@@ -24,6 +24,7 @@
     "express": "^5.2.1",
     "jsonwebtoken": "^9.0.3",
     "multer": "^2.2.0",
+    "pg": "^8.23.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "react-router": "^8.3.0"

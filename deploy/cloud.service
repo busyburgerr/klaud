@@ -1,0 +1,33 @@
+# systemd-юнит для «Клауда».
+#   sudo cp deploy/cloud.service /etc/systemd/system/cloud.service
+#   sudo systemctl daemon-reload && sudo systemctl enable --now cloud
+# Пути и пользователь ниже рассчитаны на установку в /srv/cloud от юзера cloud.
+
+[Unit]
+Description=Клауд — API и сайт
+After=network-online.target postgresql.service
+Wants=network-online.target
+Requires=postgresql.service
+
+[Service]
+Type=simple
+User=cloud
+Group=cloud
+WorkingDirectory=/srv/cloud
+EnvironmentFile=/srv/cloud/.env
+ExecStart=/usr/bin/node server/start.js
+Restart=always
+RestartSec=3
+# Логи уходят в journalctl -u cloud
+StandardOutput=journal
+StandardError=journal
+
+# Ограничения прав: писать можно только в папку загрузок.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/srv/cloud/server/uploads
+
+[Install]
+WantedBy=multi-user.target

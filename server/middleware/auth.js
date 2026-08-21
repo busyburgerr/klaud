@@ -28,12 +28,12 @@ function readToken(req) {
 }
 
 /** Кладёт req.user, если токен валиден; без токена просто идёт дальше. */
-export function optionalAuth(req, _res, next) {
+export async function optionalAuth(req, _res, next) {
   const token = readToken(req);
   if (!token) return next();
   try {
     const { sub } = jwt.verify(token, config.jwtSecret);
-    req.user = get("SELECT * FROM users WHERE id = ?", Number(sub));
+    req.user = await get("SELECT * FROM users WHERE id = ?", Number(sub));
   } catch {
     // Просроченный или битый токен — считаем гостем.
   }

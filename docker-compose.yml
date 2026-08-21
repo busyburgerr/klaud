@@ -1,0 +1,27 @@
+# Postgres для разработки и тестов.
+#   docker compose up -d      — поднять
+#   docker compose down       — остановить (данные сохранятся в томе)
+#   docker compose down -v    — остановить и стереть базу
+services:
+  db:
+    image: postgres:17-alpine
+    container_name: cloud-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: cloud
+      POSTGRES_PASSWORD: cloud
+      POSTGRES_DB: cloud
+    ports:
+      - "5432:5432"
+    volumes:
+      - cloud-db:/var/lib/postgresql/data
+      # Создаёт отдельную базу cloud_test для pnpm run api:test.
+      - ./deploy/init-test-db.sql:/docker-entrypoint-initdb.d/10-test-db.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cloud -d cloud"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  cloud-db:

@@ -19,6 +19,8 @@ import { citiesRouter, metaRouter, uploadsRouter } from "./routes/misc.js";
 import { reviewsRouter } from "./routes/reviews.js";
 import { moderationRouter } from "./routes/moderation.js";
 import { profileRouter } from "./routes/profile.js";
+import { plansRouter, shopsRouter, storefrontRouter } from "./routes/storefront.js";
+import { editionRouter, publisherCabinetRouter, publishersRouter } from "./routes/publisher.js";
 import { threadsRouter } from "./routes/threads.js";
 
 export function createApp() {
@@ -48,11 +50,13 @@ export function createApp() {
   // иначе каждый GET превращался бы в запись в базу.
   app.use((req, _res, next) => {
     if (req.user) {
+      // Ответ не ждёт этой записи: отметка присутствия не должна задерживать
+      // ни один запрос, а её потеря при обрыве связи ничего не значит.
       run(
-        `UPDATE users SET last_seen_at = datetime('now')
-          WHERE id = ? AND last_seen_at < datetime('now', '-60 seconds')`,
+        `UPDATE users SET last_seen_at = now_utc()
+          WHERE id = ? AND last_seen_at < now_utc() - interval '60 seconds'`,
         req.user.id,
-      );
+      ).catch((err) => console.error("[api] last_seen_at:", err.message));
     }
     next();
   });
@@ -66,7 +70,14 @@ export function createApp() {
   app.use("/api/articles", articlesRouter);
   app.use("/api/favorites", favoritesRouter);
   app.use("/api/threads", threadsRouter);
+  // Настройка витрины — часть личного кабинета, до общего профиля.
+  app.use("/api/profile/storefront", storefrontRouter);
+  app.use("/api/profile/publisher", publisherCabinetRouter);
+  app.use("/api/profile/edition", editionRouter);
   app.use("/api/profile", profileRouter);
+  app.use("/api/shops", shopsRouter);
+  app.use("/api/plans", plansRouter);
+  app.use("/api/publishers", publishersRouter);
   app.use("/api/uploads", uploadsRouter);
   app.use("/api/meta", metaRouter);
   app.use("/api/cities", citiesRouter);

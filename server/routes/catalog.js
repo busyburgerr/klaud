@@ -14,13 +14,13 @@ const CATEGORY_SELECT = `
 
 // ── Категории ──
 
-categoriesRouter.get("/", (_req, res) => {
-  const rows = all(`${CATEGORY_SELECT} ORDER BY c.position, c.n`);
+categoriesRouter.get("/", async (_req, res) => {
+  const rows = await all(`${CATEGORY_SELECT} ORDER BY c.position, c.n`);
   res.json({ items: rows.map((r) => S.category(r)) });
 });
 
-categoriesRouter.get("/:slug", (req, res) => {
-  const row = get(`${CATEGORY_SELECT} WHERE c.slug = ?`, req.params.slug);
+categoriesRouter.get("/:slug", async (req, res) => {
+  const row = await get(`${CATEGORY_SELECT} WHERE c.slug = ?`, req.params.slug);
   if (!row) throw notFound("Раздел не найден");
   res.json({ category: S.category(row) });
 });
@@ -29,29 +29,29 @@ categoriesRouter.get("/:slug", (req, res) => {
 
 const SELLER_SELECT = "SELECT * FROM users";
 
-sellersRouter.get("/", (req, res) => {
+sellersRouter.get("/", async (req, res) => {
   const limit = Math.min(50, Number(req.query.limit) || 20);
-  const rows = all(`${SELLER_SELECT} ORDER BY deals DESC, rating DESC LIMIT ?`, limit);
+  const rows = await all(`${SELLER_SELECT} ORDER BY deals DESC, rating DESC LIMIT ?`, limit);
   res.json({ items: rows.map(S.publicUser) });
 });
 
-sellersRouter.get("/:slug", (req, res) => {
-  const row = get(`${SELLER_SELECT} WHERE slug = ?`, req.params.slug);
+sellersRouter.get("/:slug", async (req, res) => {
+  const row = await get(`${SELLER_SELECT} WHERE slug = ?`, req.params.slug);
   if (!row) throw notFound("Продавец не найден");
 
-  const stats = get(
+  const stats = await get(
     `SELECT COUNT(*) AS active FROM listings WHERE seller_id = ? AND status = 'active'`,
     row.id,
   );
   res.json({ seller: { ...S.publicUser(row), activeListings: stats.active } });
 });
 
-sellersRouter.get("/:slug/listings", (req, res) => {
-  const row = get("SELECT id FROM users WHERE slug = ?", req.params.slug);
+sellersRouter.get("/:slug/listings", async (req, res) => {
+  const row = await get("SELECT id FROM users WHERE slug = ?", req.params.slug);
   if (!row) throw notFound("Продавец не найден");
 
   res.json(
-    queryListings(
+    await queryListings(
       { ...req.query, seller: req.params.slug },
       { viewerId: req.user?.id },
     ),

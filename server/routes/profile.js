@@ -12,13 +12,13 @@ export const profileRouter = Router();
 profileRouter.use(requireAuth);
 
 // GET /api/profile — данные шапки личного кабинета
-profileRouter.get("/", (req, res) => {
+profileRouter.get("/", async (req, res) => {
   res.json({ user: S.privateUser(req.user) });
 });
 
 // GET /api/profile/stats — плитка «активных лотов / в избранном / сделок / рейтинг»
-profileRouter.get("/stats", (req, res) => {
-  const listings = get(
+profileRouter.get("/stats", async (req, res) => {
+  const listings = await get(
     `SELECT
        COUNT(*)                                        AS total,
        SUM(CASE WHEN status = 'active'  THEN 1 ELSE 0 END) AS active,
@@ -28,13 +28,13 @@ profileRouter.get("/stats", (req, res) => {
      FROM listings WHERE seller_id = ?`,
     req.user.id,
   );
-  const saved = get("SELECT COUNT(*) AS c FROM favorites WHERE user_id = ?", req.user.id).c;
-  const unread = get(
+  const saved = (await get("SELECT COUNT(*) AS c FROM favorites WHERE user_id = ?", req.user.id)).c;
+  const unread = (await get(
     `SELECT COUNT(*) AS c FROM messages m
        JOIN threads t ON t.id = m.thread_id
       WHERE m.sender_id != ? AND m.read_at IS NULL AND (t.buyer_id = ? OR t.seller_id = ?)`,
     req.user.id, req.user.id, req.user.id,
-  ).c;
+  )).c;
 
   res.json({
     listings: {
@@ -52,9 +52,9 @@ profileRouter.get("/stats", (req, res) => {
 });
 
 // GET /api/profile/listings — вкладка «Мои объявления» (все статусы)
-profileRouter.get("/listings", (req, res) => {
+profileRouter.get("/listings", async (req, res) => {
   res.json(
-    queryListings(
+    await queryListings(
       { status: "all", ...req.query, seller: req.user.slug },
       { viewerId: req.user.id },
     ),
@@ -64,7 +64,7 @@ profileRouter.get("/listings", (req, res) => {
 // PATCH /api/profile — форма «Настройки»
 profileRouter.patch(
   "/",
-  wrap((req, res) => {
+  wrap(async (req, res) => {
     const notify = req.body?.notify ?? {};
     const body = v({ ...req.body, ...prefixed(notify) })
       .str("name", { min: 2, max: 80 })
@@ -85,7 +85,7 @@ profileRouter.patch(
         if (!/^[^\s@]+@[^\s@]+\.[a-z]{2,}$/i.test(raw) || raw.length > 160) {
           throw badRequest("Проверьте адрес почты", { email: "Некорректный адрес" });
         }
-        const taken = get("SELECT id FROM users WHERE email = ? AND id != ?", raw, req.user.id);
+        const taken = await get("SELECT id FROM users WHERE email = ? AND id != ?", raw, req.user.id);
         if (taken) throw conflict("Эта почта уже привязана к другому аккаунту");
         body.email = raw;
       }
@@ -93,7 +93,7 @@ profileRouter.patch(
 
     if (req.body?.phone !== undefined) {
       const { phone } = v(req.body).phone("phone").done();
-      const taken = get("SELECT id FROM users WHERE phone = ? AND id != ?", phone, req.user.id);
+      const taken = await get("SELECT id FROM users WHERE phone = ? AND id != ?", phone, req.user.id);
       if (taken) throw conflict("Этот номер уже занят другим аккаунтом");
       body.phone = phone;
     }
@@ -102,21 +102,21 @@ profileRouter.patch(
       .filter((f) => body[f] !== undefined);
 
     if (fields.length) {
-      run(
+      await run(
         `UPDATE users SET ${fields.map((f) => `${f} = ?`).join(", ")} WHERE id = ?`,
         ...fields.map((f) => (typeof body[f] === "boolean" ? Number(body[f]) : body[f])),
         req.user.id,
       );
     }
 
-    res.json({ user: S.privateUser(get("SELECT * FROM users WHERE id = ?", req.user.id)) });
+    res.json({ user: S.privateUser(await get("SELECT * FROM users WHERE id = ?", req.user.id)) });
   }),
 );
 
 // POST /api/profile/password
 profileRouter.post(
   "/password",
-  wrap((req, res) => {
+  wrap(async (req, res) => {
     const body = v(req.body)
       .str("current", { required: true, max: 100, trim: false })
       .str("next", { required: true, min: 8, max: 100, trim: false })
@@ -126,7 +126,7 @@ profileRouter.post(
       throw badRequest("Текущий пароль указан неверно", { current: "Неверный пароль" });
     }
 
-    run("UPDATE users SET password_hash = ? WHERE id = ?", bcrypt.hashSync(body.next, 10), req.user.id);
+    await run("UPDATE users SET password_hash = ? WHERE id = ?", bcrypt.hashSync(body.next, 10), req.user.id);
     res.json({ ok: true });
   }),
 );
