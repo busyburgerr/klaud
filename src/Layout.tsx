@@ -190,7 +190,7 @@ export default function Layout() {
             {[
               { title: "Покупателям", links: [{ t: "Как купить лот", to: "/journal/garantiynaya-sdelka" }, { t: "Доставка", to: "/journal" }, { t: "Возврат", to: "/journal" }, { t: "Безопасная сделка", to: "/journal/garantiynaya-sdelka" }] },
               { title: "Продавцам", links: [{ t: "Разместить лот", to: "/new" }, { t: "Тарифы", to: "/business" }, { t: "Продвижение", to: "/business" }] },
-              { title: "Компания", links: [{ t: "О проекте", to: "/about" }, { t: "Журнал", to: "/journal" }, { t: "Карьера", to: "/business" }, { t: "Помощь", to: "/help" }] },
+              { title: "Компания", links: [{ t: "О проекте", to: "/about" }, { t: "Журнал", to: "/journal" }, { t: "Карьера", to: "/business" }, { t: "Помощь", to: "/help" }, { t: "Соглашение", to: "/terms" }] },
             ].map((col) => (
               <div key={col.title} className="md:col-span-2">
                 <h4 className="mono-label m-0 mb-4" style={{ color: "#efe8da99" }}>{col.title}</h4>

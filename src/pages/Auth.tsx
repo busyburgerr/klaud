@@ -1,14 +1,32 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router";
-import { ApiError } from "../api";
+import api, { ApiError, type SocialProvider } from "../api";
 import { useAuth } from "../auth";
+import { useAsync } from "../hooks";
 import { FieldError } from "../components";
+import { formatPhone, phoneError, phoneDigits } from "../phone";
+import VkidButtons from "../VkidButtons";
+
+/** Способы входа через соцсети — порядок такой же, как на кнопках. */
+const SOCIAL: { key: SocialProvider; label: string }[] = [
+  { key: "vk", label: "ВКонтакте" },
+  { key: "mailru", label: "Mail.ru" },
+];
+
+/** Что показать, если провайдер вернул нас с ошибкой. */
+const SOCIAL_ERROR: Record<string, string> = {
+  cancelled: "Вход отменён на стороне соцсети",
+  state: "Сессия входа устарела — попробуйте ещё раз",
+  failed: "Соцсеть не подтвердила профиль. Попробуйте войти по номеру телефона.",
+  blocked: "Аккаунт заблокирован администрацией",
+  unavailable: "Этот способ входа сейчас недоступен",
+};
 
 export default function Auth({ mode }: { mode: "login" | "register" }) {
   const isReg = mode === "register";
   const navigate = useNavigate();
   const [params] = useSearchParams();
-  const { user, loading: bootstrapping, login, register } = useAuth();
+  const { user, loading: bootstrapping, login, register, setUser } = useAuth();
 
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
@@ -19,6 +37,42 @@ export default function Auth({ mode }: { mode: "login" | "register" }) {
   const [error, setError] = useState("");
   const [fields, setFields] = useState<Record<string, string>>({});
   const [socialNotice, setSocialNotice] = useState("");
+  // Виджет VK ID рисует кнопки сам; если он недоступен, остаются наши.
+  const [widgetOff, setWidgetOff] = useState(false);
+
+  // ── Подтверждение номера кодом ──
+  const { data: options } = useAsync(() => api.authOptions(), []);
+  const byCode = Boolean(options?.sms.enabled);
+  const [code, setCode] = useState("");
+  const [codeSent, setCodeSent] = useState(false);
+  const [hint, setHint] = useState("");
+  const [wait, setWait] = useState(0);
+
+  // Обратный отсчёт до повторной отправки.
+  useEffect(() => {
+    if (wait <= 0) return;
+    const timer = setTimeout(() => setWait(wait - 1), 1000);
+    return () => clearTimeout(timer);
+  }, [wait]);
+
+  /** Ошибка номера видна до отправки формы — не нужно ждать ответа сервера. */
+  const localPhoneError = phone ? phoneError(phone) : "";
+
+  // ── Возврат из соцсети ──
+  // На регистрации в адресе лежит токен профиля, на входе — код ошибки.
+  const socialToken = isReg ? params.get("social") : null;
+  const socialFail = !isReg ? SOCIAL_ERROR[params.get("social") ?? ""] : "";
+  const { data: socialProfile } = useAsync(
+    () => (socialToken ? api.socialProfile(socialToken) : Promise.resolve(null)),
+    [socialToken],
+  );
+
+  // Имя и телефон, которые соцсеть уже знает, подставляем один раз.
+  useEffect(() => {
+    if (!socialProfile) return;
+    setName((prev) => prev || socialProfile.name);
+    setPhone((prev) => prev || socialProfile.phone);
+  }, [socialProfile]);
 
   /**
    * Куда вернуть после входа. Значение появляется только при переходе с
@@ -34,25 +88,86 @@ export default function Auth({ mode }: { mode: "login" | "register" }) {
     if (!bootstrapping && user) navigate(next, { replace: true });
   }, [user, bootstrapping, next, navigate]);
 
+  const fail = (err: unknown) => {
+    if (err instanceof ApiError) {
+      setError(err.message);
+      setFields(err.details ?? {});
+    } else {
+      setError("Сервер недоступен. Попробуйте ещё раз.");
+    }
+  };
+
+  /** Запрос кода: тот же обработчик и для первой отправки, и для повтора. */
+  const askCode = async () => {
+    if (busy || wait > 0) return;
+    const local = phoneError(phone);
+    if (local) {
+      setFields({ phone: local });
+      return;
+    }
+
+    setBusy(true);
+    setError("");
+    setFields({});
+    try {
+      const sent = await api.requestCode(phoneDigits(phone), isReg ? "register" : "login");
+      setCodeSent(true);
+      setWait(sent.resendSeconds);
+      setHint(sent.delivered
+        ? `Код отправлен на ${sent.phone}`
+        : sent.code
+          ? `СМС не подключены: код для проверки — ${sent.code}`
+          : "СМС не подключены — код записан в журнал сервера");
+    } catch (err) {
+      fail(err);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (busy) return;
+
+    const local = phoneError(phone);
+    if (local) {
+      setFields({ phone: local });
+      return;
+    }
+
+    // Пока код не запрошен, кнопка отправляет именно запрос кода.
+    if (byCode && !codeSent) {
+      await askCode();
+      return;
+    }
 
     setBusy(true);
     setError("");
     setFields({});
 
     try {
-      if (isReg) await register({ name, phone, password: pass, agree });
-      else await login({ phone, password: pass });
+      const digits = phoneDigits(phone);
+      if (socialToken) {
+        const created = await api.registerSocial({
+          social: socialToken,
+          name,
+          phone: digits,
+          agree,
+          ...(pass ? { password: pass } : {}),
+          ...(byCode ? { code } : {}),
+        });
+        // Регистрация через соцсеть сразу выдаёт токен — обновляем профиль.
+        setUser(created);
+      } else if (isReg) {
+        await register({ name, phone: digits, password: pass, agree, ...(byCode ? { code } : {}) });
+      } else if (byCode) {
+        await login({ phone: digits, code });
+      } else {
+        await login({ phone: digits, password: pass });
+      }
       navigate(next, { replace: true });
     } catch (err) {
-      if (err instanceof ApiError) {
-        setError(err.message);
-        setFields(err.details ?? {});
-      } else {
-        setError("Сервер недоступен. Попробуйте ещё раз.");
-      }
+      fail(err);
     } finally {
       setBusy(false);
     }
@@ -106,6 +221,19 @@ export default function Auth({ mode }: { mode: "login" | "register" }) {
             </p>
           )}
 
+          {socialFail && (
+            <p className="mono-label mb-6" style={{ color: "#a33", background: "#f6f0e3", border: "1px solid #a3333322", borderRadius: 12, padding: "12px 14px" }}>
+              {socialFail}
+            </p>
+          )}
+
+          {socialProfile && (
+            <p className="mono-label mb-6" style={{ color: "#1f232099", background: "#f6f0e3", border: "1px solid #1f232022", borderRadius: 12, padding: "12px 14px" }}>
+              {socialProfile.providerLabel} подтвердил профиль{socialProfile.email ? ` · ${socialProfile.email}` : ""}.
+              Остались номер телефона и согласие с правилами.
+            </p>
+          )}
+
           {error && (
             <p className="mono-label mb-6" style={{ color: "#a33", background: "#f6f0e3", border: "1px solid #a3333322", borderRadius: 12, padding: "12px 14px" }}>
               {error}
@@ -124,22 +252,65 @@ export default function Auth({ mode }: { mode: "login" | "register" }) {
               <span className="mono-label" style={label}>Номер телефона</span>
               <div className="flex items-center" style={{ ...field, padding: 0, overflow: "hidden" }}>
                 <span className="mono-label flex items-center" style={{ padding: "0 14px", borderRight: "1px solid #1f232022", color: "#1f232099", alignSelf: "stretch" }}>+7</span>
-                <input required type="tel" inputMode="tel" autoComplete="tel-national" value={phone} onChange={(e) => setPhone(e.target.value.replace(/[^\d]/g, "").slice(0, 10))} placeholder="900 000-00-00" style={{ border: "none", background: "none", outline: "none", padding: "15px 16px", fontSize: 15, width: "100%" }} />
+                <input
+                  required
+                  type="tel"
+                  inputMode="tel"
+                  autoComplete="tel-national"
+                  value={formatPhone(phone)}
+                  onChange={(e) => { setPhone(phoneDigits(e.target.value)); setFields({}); }}
+                  placeholder="900 000-00-00"
+                  style={{ border: "none", background: "none", outline: "none", padding: "15px 16px", fontSize: 15, width: "100%" }}
+                />
               </div>
-              <FieldError>{fields.phone}</FieldError>
+              <FieldError>{fields.phone || localPhoneError}</FieldError>
             </div>
+
+            {byCode && codeSent && (
+              <div>
+                <div className="flex items-center justify-between" style={{ marginBottom: 8 }}>
+                  <span className="mono-label" style={{ color: "#1f232099" }}>Код из СМС</span>
+                  <button
+                    type="button"
+                    onClick={askCode}
+                    disabled={wait > 0 || busy}
+                    className="mono-label"
+                    style={{ background: "none", border: "none", cursor: wait > 0 ? "default" : "pointer", color: wait > 0 ? "#1f232066" : "#1f2320", padding: 0 }}
+                  >
+                    {wait > 0 ? `Выслать снова через ${wait} с` : "Выслать снова"}
+                  </button>
+                </div>
+                <input
+                  required
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  value={code}
+                  onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 4))}
+                  placeholder="0000"
+                  style={{ ...field, letterSpacing: "0.5em", fontSize: 20, textAlign: "center" }}
+                />
+                <FieldError>{fields.code}</FieldError>
+                {hint && (
+                  <p className="mono-label m-0 mt-2" style={{ color: "#1f232099" }}>{hint}</p>
+                )}
+              </div>
+            )}
+            {(isReg || !byCode) && (
             <div>
               <div className="flex items-center justify-between" style={{ marginBottom: 8 }}>
-                <span className="mono-label" style={{ color: "#1f232099" }}>Пароль{isReg ? " · от 8 символов" : ""}</span>
+                <span className="mono-label" style={{ color: "#1f232099" }}>
+                  Пароль{socialToken ? " · можно задать позже" : isReg ? " · от 8 символов" : ""}
+                </span>
               </div>
               <div className="relative">
-                <input required type={show ? "text" : "password"} value={pass} onChange={(e) => setPass(e.target.value)} placeholder="••••••••" autoComplete={isReg ? "new-password" : "current-password"} style={{ ...field, paddingRight: 52 }} />
+                <input required={!socialToken} type={show ? "text" : "password"} value={pass} onChange={(e) => setPass(e.target.value)} placeholder="••••••••" autoComplete={isReg ? "new-password" : "current-password"} style={{ ...field, paddingRight: 52 }} />
                 <button type="button" onClick={() => setShow(!show)} className="mono-label" style={{ position: "absolute", right: 14, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", color: "#1f232099" }}>
                   {show ? "Скрыть" : "Показать"}
                 </button>
               </div>
               <FieldError>{fields.password}</FieldError>
             </div>
+            )}
 
             {isReg && (
               <div>
@@ -148,14 +319,28 @@ export default function Auth({ mode }: { mode: "login" | "register" }) {
                     {agree && <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M2 6l3 3 5-6" stroke="#efe8da" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/></svg>}
                   </span>
                   <input type="checkbox" checked={agree} onChange={() => setAgree(!agree)} style={{ display: "none" }} />
-                  Соглашаюсь с правилами публикации и политикой обработки данных Клауд.
+                  <span>
+                    Соглашаюсь с{" "}
+                    <Link to="/terms" target="_blank" className="underline-link" style={{ color: "#1f2320", fontWeight: 600, textDecoration: "none" }}>
+                      пользовательским соглашением
+                    </Link>{" "}
+                    и обработкой персональных данных Клауд.
+                  </span>
                 </label>
                 <FieldError>{fields.agree}</FieldError>
               </div>
             )}
 
             <button type="submit" disabled={busy} className="mono-label" style={{ background: "#1f2320", color: "#efe8da", border: "none", borderRadius: 14, padding: "18px", cursor: busy ? "wait" : "pointer", marginTop: 4, opacity: busy ? 0.7 : 1 }}>
-              {busy ? "Подождите…" : isReg ? "Создать аккаунт →" : "Войти →"}
+              {busy
+                ? "Подождите…"
+                : byCode && !codeSent
+                  ? "Получить код в СМС →"
+                  : socialToken
+                    ? "Завершить регистрацию →"
+                    : isReg
+                      ? "Создать аккаунт →"
+                      : "Войти →"}
             </button>
           </form>
 
@@ -166,20 +351,35 @@ export default function Auth({ mode }: { mode: "login" | "register" }) {
             <div style={{ flex: 1, height: 1, background: "#1f232022" }} />
           </div>
 
-          {/* Вход через соцсети: интерфейс готов, провайдеры пока не подключены. */}
+          {/* Вход через соцсети: официальный виджет VK ID, если он доступен. */}
+          {options?.social.vk && !widgetOff ? (
+            <VkidButtons
+              onSignedIn={(u) => { setUser(u); navigate(next, { replace: true }); }}
+              onRegister={(token) => navigate(`/register?social=${encodeURIComponent(token)}${redirected ? `&next=${encodeURIComponent(next)}` : ""}`)}
+              onUnavailable={() => setWidgetOff(true)}
+              onError={setError}
+            />
+          ) : (
           <div className="flex gap-3">
-            {["VK", "Google", "Apple"].map((p) => (
+            {SOCIAL.map((s) => (
               <button
-                key={p}
+                key={s.key}
                 type="button"
-                onClick={() => setSocialNotice(`Вход через ${p} скоро появится. Пока используйте номер телефона.`)}
+                onClick={() => {
+                  if (options?.social[s.key]) {
+                    window.location.href = `/api/auth/oauth/${s.key}?next=${encodeURIComponent(next)}`;
+                  } else {
+                    setSocialNotice(`Вход через ${s.label} пока не подключён. Используйте номер телефона.`);
+                  }
+                }}
                 className="mono-label flex-1"
                 style={{ background: "transparent", border: "1px solid #1f232033", borderRadius: 14, padding: "14px", cursor: "pointer", color: "#1f2320" }}
               >
-                {p}
+                {s.label}
               </button>
             ))}
           </div>
+          )}
           {socialNotice && (
             <p className="mono-label mt-3 text-center" style={{ color: "#1f232099" }}>{socialNotice}</p>
           )}

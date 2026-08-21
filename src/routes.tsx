@@ -12,6 +12,7 @@ import Shop from "./pages/Shop";
 import Publisher from "./pages/Publisher";
 import Business from "./pages/Business";
 import Help from "./pages/Help";
+import Terms from "./pages/Terms";
 import About from "./pages/About";
 import Journal from "./pages/Journal";
 import Article from "./pages/Article";
@@ -57,6 +58,7 @@ export const router = createBrowserRouter([
           { path: "publisher/:id", Component: Publisher },
           { path: "business", Component: Business },
           { path: "help", Component: Help },
+          { path: "terms", Component: Terms },
           { path: "about", Component: About },
           { path: "journal", Component: Journal },
           // Создание и правка — до маршрута со :slug, иначе «new» примут за адрес материала.

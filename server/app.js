@@ -14,7 +14,7 @@ import { articlesRouter } from "./routes/journal.js";
 import { favoritesRouter } from "./routes/favorites.js";
 import { listingsRouter } from "./routes/listings.js";
 import { aboutRouter } from "./routes/about.js";
-import { helpRouter } from "./routes/help.js";
+import { helpRouter, legalRouter } from "./routes/help.js";
 import { citiesRouter, metaRouter, uploadsRouter } from "./routes/misc.js";
 import { reviewsRouter } from "./routes/reviews.js";
 import { moderationRouter } from "./routes/moderation.js";
@@ -82,6 +82,7 @@ export function createApp() {
   app.use("/api/meta", metaRouter);
   app.use("/api/cities", citiesRouter);
   app.use("/api/help", helpRouter);
+  app.use("/api/legal", legalRouter);
   app.use("/api/about", aboutRouter);
   app.use("/api/reviews", reviewsRouter);
   app.use("/api/moderation", moderationRouter);

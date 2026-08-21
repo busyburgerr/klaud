@@ -6,8 +6,8 @@ type AuthCtx = {
   user: Profile | null;
   /** true, пока проверяется сохранённый токен при старте приложения. */
   loading: boolean;
-  login: (input: { phone: string; password: string }) => Promise<Profile>;
-  register: (input: { name: string; phone: string; password: string; agree: boolean }) => Promise<Profile>;
+  login: (input: { phone: string; password?: string; code?: string }) => Promise<Profile>;
+  register: (input: { name: string; phone: string; password: string; agree: boolean; code?: string }) => Promise<Profile>;
   logout: () => Promise<void>;
   /** Локально обновить пользователя после сохранения настроек. */
   setUser: (user: Profile) => void;
@@ -40,14 +40,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
-  const login = useCallback(async (input: { phone: string; password: string }) => {
+  const login = useCallback(async (input: { phone: string; password?: string; code?: string }) => {
     const u = await api.login(input);
     setUser(u);
     return u;
   }, []);
 
   const register = useCallback(
-    async (input: { name: string; phone: string; password: string; agree: boolean }) => {
+    async (input: { name: string; phone: string; password: string; agree: boolean; code?: string }) => {
       const u = await api.register(input);
       setUser(u);
       return u;

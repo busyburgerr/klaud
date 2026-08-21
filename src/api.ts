@@ -37,6 +37,9 @@ export type Role = "user" | "moderator" | "admin";
 
 export type PlanKey = "shelf" | "storefront" | "edition";
 
+/** Соцсети, через которые можно войти. */
+export type SocialProvider = "vk" | "mailru";
+
 /** Тариф продавца в том виде, в каком его показывает интерфейс. */
 export type PlanBadge = {
   key: PlanKey;
@@ -140,6 +143,16 @@ export type EditionState = {
   invites: (PublisherInvite & { publisherId: number })[];
 };
 
+/** Правовой документ площадки: разделы из тех же блоков, что и материалы журнала. */
+export type LegalDocument = {
+  slug: string;
+  title: string;
+  lead: string;
+  version: string;
+  updated: string;
+  sections: { n: string; title: string; blocks: ArticleBlock[] }[];
+};
+
 /** Отчёт массовой загрузки каталога. */
 export type ImportReport = {
   created: number;
@@ -218,6 +231,8 @@ export type Profile = Seller & {
   phoneRaw: string;
   email: string | null;
   emailVerified: boolean;
+  /** Номер подтверждён кодом из СМС. */
+  phoneVerified: boolean;
   notify: { deals: boolean; journal: boolean; promo: boolean };
 };
 
@@ -507,6 +522,11 @@ export const api = {
   // ── Издательский дом ──
   /** Полоса «Выбор издания» для главной. */
   publisherStrip: () => request<PublisherStrip>("GET", "/publishers/featured"),
+  /** Пользовательское соглашение. */
+  terms: () =>
+    request<{ document: LegalDocument; support: { email: string; phone: string; hours: string } }>(
+      "GET", "/legal/terms",
+    ),
   /** Публичная страница издательского дома. */
   publisher: (slug: string) => request<Publisher>("GET", `/publishers/${slug}`),
   /** Кабинет издателя. */
@@ -593,12 +613,73 @@ export const api = {
     }>("GET", "/meta"),
 
   // ── Аккаунт ──
-  register: async (input: { name: string; phone: string; password: string; agree: boolean; city?: string }) => {
+  /** Какие способы входа доступны: коды из СМС и вход через соцсети. */
+  authOptions: () =>
+    request<{
+      sms: { enabled: boolean; resendSeconds: number; codeLength: number };
+      social: { vk: boolean; mailru: boolean };
+    }>("GET", "/auth/options"),
+
+  /** Настройки виджета VK ID: приложение, адрес возврата и одноразовые state/verifier. */
+  vkidParams: () =>
+    request<{
+      app: number;
+      redirectUrl: string;
+      scope: string;
+      state: string;
+      codeVerifier: string;
+    }>("GET", "/auth/vkid"),
+
+  /** Обмен кода из виджета на вход или на шаг завершения регистрации. */
+  vkidExchange: async (input: { code: string; deviceId: string; state: string }) => {
+    const res = await request<
+      { status: "signed-in"; token: string; user: Profile } | { status: "register"; social: string }
+    >("POST", "/auth/vkid", input);
+    if (res.status === "signed-in") auth.token = res.token;
+    return res;
+  },
+
+  /** Что соцсеть рассказала о новом пользователе. */
+  socialProfile: (token: string) =>
+    request<{
+      provider: SocialProvider;
+      providerLabel: string;
+      name: string;
+      email: string;
+      phone: string;
+    }>("GET", `/auth/social/${encodeURIComponent(token)}`),
+
+  /** Завершение регистрации через соцсеть: номер и согласие добавляет человек. */
+  registerSocial: async (input: {
+    social: string;
+    name: string;
+    phone: string;
+    agree: boolean;
+    password?: string;
+    city?: string;
+    code?: string;
+  }) => {
+    const res = await request<{ token: string; user: Profile }>("POST", "/auth/social", input);
+    auth.token = res.token;
+    return res.user;
+  },
+  /** Запрос кода на номер. `code` приходит только в режиме разработки. */
+  requestCode: (phone: string, purpose: "register" | "login") =>
+    request<{
+      sent: boolean;
+      delivered: boolean;
+      phone: string;
+      resendSeconds: number;
+      expiresIn: number;
+      code?: string;
+    }>("POST", "/auth/code", { phone, purpose }),
+
+  register: async (input: { name: string; phone: string; password: string; agree: boolean; city?: string; code?: string }) => {
     const res = await request<{ token: string; user: Profile }>("POST", "/auth/register", input);
     auth.token = res.token;
     return res.user;
   },
-  login: async (input: { phone: string; password: string }) => {
+  login: async (input: { phone: string; password?: string; code?: string }) => {
     const res = await request<{ token: string; user: Profile }>("POST", "/auth/login", input);
     auth.token = res.token;
     return res.user;

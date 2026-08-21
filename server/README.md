@@ -63,7 +63,7 @@ node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"
 | `pnpm run api:seed -- --force` | Пересоздать демо-данные с нуля |
 | `pnpm run api:reset` | **Очистить базу**: остаются только категории и персонал |
 | `pnpm run api:catalog` | Наполнить каталог лотами во всех разделах |
-| `pnpm run api:test` | Прогнать тесты API (115 проверок, база `cloud_test`) |
+| `pnpm run api:test` | Прогнать тесты API (132 проверки, база `cloud_test`) |
 
 ### Состояние базы
 
@@ -132,6 +132,47 @@ node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"
 
 Вход по номеру телефона и паролю. Номер нормализуется до 10 цифр, так что
 `+7 900 128-45-09`, `8 (900) 128-45-09` и `9001284509` — один и тот же аккаунт.
+Принимается только российский мобильный: десять цифр, начиная с девятки —
+на городской номер код подтверждения не придёт.
+
+### Вход через соцсети
+
+Поддерживаются ВКонтакте (VK ID) и Mail.ru, оба по OAuth 2.0 authorization code;
+у ВК дополнительно PKCE. Ключи задаются в `.env` (`OAUTH_VK_CLIENT_ID`,
+`OAUTH_VK_SECRET`, `OAUTH_MAILRU_CLIENT_ID`, `OAUTH_MAILRU_SECRET`) вместе с
+`PUBLIC_URL` — из него собирается `redirect_uri`
+(`https://сайт/api/auth/oauth/vk/callback`). Пока ключей нет, `GET
+/api/auth/options` возвращает `social: { vk: false, mailru: false }`, и кнопка
+честно говорит, что способ не подключён.
+
+Кнопки рисует официальный виджет VK ID (`src/VkidButtons.tsx`): SDK грузится с
+CDN, показывает «VK ID» и «Mail.ru» и возвращает одноразовый код. Меняет код на
+профиль сервер (`POST /api/auth/vkid`) — `client_secret` в браузер не попадает,
+а `state` и `code_verifier` лежат в httpOnly-куках. Если SDK не загрузился,
+страница показывает обычные кнопки, которые уводят на `GET /api/auth/oauth/:provider`.
+В настройках приложения ВК нужны оба доверенных адреса: корень сайта (его
+использует виджет) и `/api/auth/oauth/vk/callback`.
+
+Что происходит после согласия: если профиль уже связан — вход; если совпали
+почта или телефон существующего аккаунта — связываем и впускаем; если человек
+новый — площадка выдаёт короткий токен и уводит на `/register?social=<токен>`,
+где остаётся указать телефон и принять правила. Номер соцсеть не подтверждает,
+поэтому он проверяется кодом, как при обычной регистрации. Связи хранятся в
+таблице `social_accounts`.
+
+### Подтверждение по СМС
+
+Провайдер выбирается переменной `SMS_PROVIDER`: `smsru` — настоящая отправка
+(нужен `SMS_API_KEY`), `log` — код пишется в журнал сервера, `off` —
+подтверждение выключено. По умолчанию в проде `off`, в разработке `log`, так
+что без настроек площадка работает по паролю и ничего не обещает впустую.
+
+Когда подтверждение включено, регистрация требует код, а войти можно двумя
+способами: паролем или кодом (`{ phone, code }` вместо пароля). Код — четыре
+цифры, живёт 5 минут, одноразовый; новый можно просить раз в минуту, пять
+неверных попыток гасят его. В базе хранится только хеш кода (`phone_codes`),
+как и у пароля. В режиме `log` вне прода код возвращается прямо в ответе — в
+проде никогда.
 
 Токен возвращается в теле ответа **и** ставится в httpOnly-cookie. Клиент может
 использовать любой способ: `Authorization: Bearer <token>` или cookie.
@@ -176,8 +217,17 @@ node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"
 
 | Метод | Путь | Описание |
 | --- | --- | --- |
-| `POST` | `/api/auth/register` | `{ name, phone, password, agree }` → токен |
-| `POST` | `/api/auth/login` | `{ phone, password }` → токен |
+| `POST` | `/api/auth/register` | `{ name, phone, password, agree, code }` → токен |
+| `POST` | `/api/auth/login` | `{ phone, password }` или `{ phone, code }` → токен |
+| `GET` | `/api/auth/options` | Доступные способы: коды из СМС и соцсети |
+| `GET` | `/api/auth/sms` | Включено ли подтверждение по коду |
+| `GET` | `/api/auth/vkid` | Настройки виджета VK ID и одноразовые `state`/`codeVerifier` |
+| `POST` | `/api/auth/vkid` | `{ code, deviceId, state }` — обмен кода из виджета |
+| `GET` | `/api/auth/oauth/:provider` | Начало входа через `vk` или `mailru` |
+| `GET` | `/api/auth/oauth/:provider/callback` | Возврат от провайдера |
+| `GET` | `/api/auth/social/:token` | Профиль из соцсети для завершения регистрации |
+| `POST` | `/api/auth/social` | `{ social, name, phone, agree, code? }` → токен |
+| `POST` | `/api/auth/code` | `{ phone, purpose: register\|login }` — выслать код |
 | `POST` | `/api/auth/logout` | Сбрасывает cookie |
 | `GET` | 🔒 `/api/auth/me` | Текущий пользователь |
 | `GET` | 🔒 `/api/profile` | Профиль |

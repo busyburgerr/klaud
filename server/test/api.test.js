@@ -12,6 +12,7 @@ process.env.JWT_SECRET = "test-secret";
 process.env.UPLOADS_DIR = path.join(os.tmpdir(), `cloud-test-uploads-${process.pid}`);
 process.env.RATE_LIMIT = "off";
 
+const jwt = (await import("jsonwebtoken")).default;
 const { createApp } = await import("../app.js");
 const { close, exec } = await import("../db/index.js");
 const { seed, DEMO_PASSWORD } = await import("../db/seed.js");
@@ -195,8 +196,15 @@ describe("каталог", () => {
 
 describe("авторизация", () => {
   it("регистрирует и сразу выдаёт токен", async () => {
+    // Номер подтверждается кодом: в тестах СМС работают в режиме журнала.
+    const asked = await api("POST", "/api/auth/code", {
+      body: { phone: "999 000-11-22", purpose: "register" },
+    });
     const { status, body } = await api("POST", "/api/auth/register", {
-      body: { name: "Пётр Тестов", phone: "999 000-11-22", password: "supersecret1", agree: true },
+      body: {
+        name: "Пётр Тестов", phone: "999 000-11-22", password: "supersecret1",
+        agree: true, code: asked.body.code,
+      },
     });
     assert.equal(status, 201);
     assert.ok(body.token);
@@ -474,5 +482,218 @@ describe("служебное", () => {
     const { status, body } = await api("GET", "/api/nope");
     assert.equal(status, 404);
     assert.ok(body.error);
+  });
+});
+
+describe("телефон и коды подтверждения", () => {
+  const freePhone = () => "9" + String(Date.now()).slice(-9);
+
+  it("проверяет номер телефона при регистрации", async () => {
+    const bad = [
+      ["4951234567", "городской номер"],
+      ["12345", "слишком короткий"],
+      ["9999999999", "все цифры одинаковые"],
+    ];
+
+    for (const [phone, why] of bad) {
+      const res = await api("POST", "/api/auth/register", {
+        body: { name: "Тест Тестов", phone, password: "cloud12345", agree: true },
+      });
+      assert.equal(res.status, 400, why);
+      assert.ok(res.body.details.phone, `подсказка для «${why}»`);
+    }
+  });
+
+  it("принимает номер в любом написании", async () => {
+    const login = await api("POST", "/api/auth/login", {
+      body: { phone: "+7 (900) 128-45-09", password: DEMO_PASSWORD },
+    });
+    assert.equal(login.status, 200);
+    assert.equal(login.body.user.phoneRaw, "9001284509");
+  });
+
+  it("сообщает, включено ли подтверждение по коду", async () => {
+    const res = await api("GET", "/api/auth/sms");
+    assert.equal(res.status, 200);
+    assert.equal(typeof res.body.enabled, "boolean");
+    assert.equal(res.body.codeLength, 4);
+  });
+
+  it("регистрирует по коду из СМС и не принимает чужой код", async () => {
+    const phone = freePhone();
+
+    const asked = await api("POST", "/api/auth/code", { body: { phone, purpose: "register" } });
+    assert.equal(asked.status, 201);
+    assert.ok(asked.body.code, "в режиме разработки код возвращается");
+
+    const wrong = await api("POST", "/api/auth/register", {
+      body: { name: "Тест Тестов", phone, password: "cloud12345", agree: true, code: "0000" },
+    });
+    assert.equal(wrong.status, 400);
+    assert.ok(wrong.body.details.code);
+
+    const noCode = await api("POST", "/api/auth/register", {
+      body: { name: "Тест Тестов", phone, password: "cloud12345", agree: true },
+    });
+    assert.equal(noCode.status, 400, "без кода регистрация не проходит");
+
+    const created = await api("POST", "/api/auth/register", {
+      body: { name: "Тест Тестов", phone, password: "cloud12345", agree: true, code: asked.body.code },
+    });
+    assert.equal(created.status, 201);
+    assert.equal(created.body.user.phoneVerified, true);
+
+    // Код одноразовый.
+    const reused = await api("POST", "/api/auth/login", { body: { phone, code: asked.body.code } });
+    assert.equal(reused.status, 400);
+  });
+
+  it("не шлёт код на занятый номер и на чужой аккаунт", async () => {
+    const taken = await api("POST", "/api/auth/code", {
+      body: { phone: "9001284509", purpose: "register" },
+    });
+    assert.equal(taken.status, 409);
+
+    const unknown = await api("POST", "/api/auth/code", {
+      body: { phone: freePhone(), purpose: "login" },
+    });
+    assert.equal(unknown.status, 400);
+  });
+
+  it("пускает по коду и не даёт запрашивать его слишком часто", async () => {
+    const phone = freePhone();
+    const reg = await api("POST", "/api/auth/code", { body: { phone, purpose: "register" } });
+    await api("POST", "/api/auth/register", {
+      body: { name: "Кодовый Вход", phone, password: "cloud12345", agree: true, code: reg.body.code },
+    });
+
+    const asked = await api("POST", "/api/auth/code", { body: { phone, purpose: "login" } });
+    assert.equal(asked.status, 201);
+
+    const again = await api("POST", "/api/auth/code", { body: { phone, purpose: "login" } });
+    assert.equal(again.status, 400, "повтор до истечения паузы");
+
+    const entered = await api("POST", "/api/auth/login", { body: { phone, code: asked.body.code } });
+    assert.equal(entered.status, 200);
+    assert.equal(entered.body.user.phoneVerified, true);
+  });
+
+  it("гасит код после пяти неверных попыток", async () => {
+    const phone = freePhone();
+    const asked = await api("POST", "/api/auth/code", { body: { phone, purpose: "register" } });
+    const wrong = asked.body.code === "1111" ? "2222" : "1111";
+
+    let last;
+    for (let i = 0; i < 5; i += 1) {
+      last = await api("POST", "/api/auth/register", {
+        body: { name: "Перебор Кода", phone, password: "cloud12345", agree: true, code: wrong },
+      });
+    }
+    assert.equal(last.status, 400);
+
+    // Верный код тоже больше не сработает — запись стёрта.
+    const now = await api("POST", "/api/auth/register", {
+      body: { name: "Перебор Кода", phone, password: "cloud12345", agree: true, code: asked.body.code },
+    });
+    assert.equal(now.status, 400);
+  });
+});
+
+describe("пользовательское соглашение", () => {
+  it("отдаётся целиком и с контактами поддержки", async () => {
+    const { status, body } = await api("GET", "/api/legal/terms");
+    assert.equal(status, 200);
+    assert.equal(body.document.slug, "terms");
+    assert.ok(body.document.sections.length >= 5, "разделы на месте");
+    assert.ok(body.document.version && body.document.updated, "указана редакция и дата");
+    assert.ok(body.support.email.includes("@"));
+
+    for (const section of body.document.sections) {
+      assert.ok(section.title, "у раздела есть заголовок");
+      assert.ok(section.blocks.length > 0, `раздел «${section.title}» не пустой`);
+    }
+  });
+});
+
+describe("вход через соцсети", () => {
+  /** Токен связывания площадка выдаёт сама — подделываем его тем же секретом. */
+  const linkToken = (over = {}) =>
+    jwt.sign(
+      { provider: "vk", externalId: String(Date.now()), name: "Соцсетевой Гость", email: "", phone: "", ...over },
+      process.env.JWT_SECRET,
+      { expiresIn: "15m" },
+    );
+
+  it("показывает, какие способы входа доступны", async () => {
+    const { status, body } = await api("GET", "/api/auth/options");
+    assert.equal(status, 200);
+    assert.equal(typeof body.sms.enabled, "boolean");
+    // Ключей приложений в тестах нет — значит и кнопки обещать нечего.
+    assert.deepEqual(body.social, { vk: false, mailru: false });
+  });
+
+  it("не начинает вход без настроенного провайдера", async () => {
+    assert.equal((await api("GET", "/api/auth/oauth/vk")).status, 400);
+    assert.equal((await api("GET", "/api/auth/oauth/mailru")).status, 400);
+    assert.equal((await api("GET", "/api/auth/oauth/telegram")).status, 404);
+  });
+
+  it("завершает регистрацию по токену соцсети", async () => {
+    const phone = "9" + String(Date.now()).slice(-9);
+    const social = linkToken({ email: "gost@example.com" });
+
+    const asked = await api("POST", "/api/auth/code", { body: { phone, purpose: "register" } });
+    const created = await api("POST", "/api/auth/social", {
+      body: {
+        social, name: "Соцсетевой Гость", phone, agree: true, code: asked.body.code,
+      },
+    });
+
+    assert.equal(created.status, 201);
+    assert.ok(created.body.token, "вход выполняется сразу");
+    assert.equal(created.body.user.email, "gost@example.com");
+    assert.equal(created.body.user.phoneVerified, true);
+
+    // Пароль можно не задавать — тогда вход идёт через соцсеть или код.
+    const byCode = await api("POST", "/api/auth/code", { body: { phone, purpose: "login" } });
+    const entered = await api("POST", "/api/auth/login", { body: { phone, code: byCode.body.code } });
+    assert.equal(entered.status, 200);
+  });
+
+  it("рассказывает о профиле по токену и отклоняет чужой", async () => {
+    const social = linkToken({ name: "Пробный Профиль", email: "probe@example.com" });
+
+    const info = await api("GET", `/api/auth/social/${encodeURIComponent(social)}`);
+    assert.equal(info.status, 200);
+    assert.equal(info.body.provider, "vk");
+    assert.equal(info.body.providerLabel, "ВКонтакте");
+    assert.equal(info.body.name, "Пробный Профиль");
+
+    assert.equal((await api("GET", "/api/auth/social/мусор")).status, 400);
+
+    const forged = jwt.sign({ provider: "vk", externalId: "1" }, "чужой-секрет");
+    assert.equal((await api("POST", "/api/auth/social", { body: { social: forged, name: "Х", phone: "9001112233", agree: true } })).status, 400);
+  });
+
+  it("не отдаёт настройки виджета VK ID без ключей", async () => {
+    assert.equal((await api("GET", "/api/auth/vkid")).status, 400);
+    assert.equal(
+      (await api("POST", "/api/auth/vkid", { body: { code: "x", deviceId: "y", state: "z" } })).status,
+      400,
+    );
+  });
+
+  it("требует согласие и свободный номер", async () => {
+    const phone = "9" + String(Date.now()).slice(-9);
+    const noAgree = await api("POST", "/api/auth/social", {
+      body: { social: linkToken(), name: "Без Согласия", phone, agree: false },
+    });
+    assert.equal(noAgree.status, 400);
+    assert.ok(noAgree.body.details.agree);
+
+    const taken = await api("POST", "/api/auth/social", {
+      body: { social: linkToken(), name: "Занятый Номер", phone: "9001284509", agree: true },
+    });
+    assert.equal(taken.status, 409);
   });
 });

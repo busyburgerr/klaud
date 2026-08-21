@@ -61,14 +61,38 @@ export class Validator {
     return this;
   }
 
+  /**
+   * Мобильный номер России: десять цифр, начиная с девятки.
+   * Принимаем любую запись — «+7 900 …», «8 (900) …», «900…», — но городские
+   * и заведомо неверные номера отклоняем: на них не придёт код подтверждения.
+   */
   phone(field = "phone", { required = true } = {}) {
     const digits = normalizePhone(this.src[field]);
     if (!digits) {
       if (required) this.errors[field] = "Обязательное поле";
       return this;
     }
-    if (digits.length !== 10) this.errors[field] = "Ожидается 10 цифр номера";
-    else this.out[field] = digits;
+    if (digits.length !== 10) {
+      this.errors[field] = "В номере должно быть 10 цифр после +7";
+    } else if (!/^9/.test(digits)) {
+      this.errors[field] = "Нужен мобильный номер — он начинается с девятки";
+    } else if (/^(\d)\1{9}$/.test(digits)) {
+      this.errors[field] = "Проверьте номер: он выглядит неправдоподобно";
+    } else {
+      this.out[field] = digits;
+    }
+    return this;
+  }
+
+  /** Код из СМС: ровно четыре цифры. */
+  code(field = "code", { required = true } = {}) {
+    const raw = String(this.src[field] ?? "").replace(/\D/g, "");
+    if (!raw) {
+      if (required) this.errors[field] = "Введите код из СМС";
+      return this;
+    }
+    if (!/^\d{4}$/.test(raw)) this.errors[field] = "Код состоит из четырёх цифр";
+    else this.out[field] = raw;
     return this;
   }
 

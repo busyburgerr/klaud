@@ -27,6 +27,8 @@ CREATE TABLE IF NOT EXISTS users (
   notify_journal INTEGER   NOT NULL DEFAULT 0,
   notify_promo   INTEGER   NOT NULL DEFAULT 1,
   email_verified INTEGER   NOT NULL DEFAULT 0,
+  -- Номер подтверждён кодом из СМС.
+  phone_verified INTEGER   NOT NULL DEFAULT 0,
   role           TEXT      NOT NULL DEFAULT 'user'
                    CHECK (role IN ('user', 'moderator', 'admin')),
   -- Тариф продавца: полка (обычная страница), витрина, издание.
@@ -206,6 +208,31 @@ CREATE TABLE IF NOT EXISTS reviews (
 
 CREATE INDEX IF NOT EXISTS idx_reviews_target ON reviews(target_id, created_at DESC);
 
+-- ── Коды подтверждения ──
+-- Один действующий код на номер: новый запрос перезаписывает прежний.
+-- Сам код не храним, только хеш — как и пароль.
+CREATE TABLE IF NOT EXISTS phone_codes (
+  phone      TEXT      PRIMARY KEY,
+  code_hash  TEXT      NOT NULL,
+  purpose    TEXT      NOT NULL CHECK (purpose IN ('register', 'login')),
+  attempts   INTEGER   NOT NULL DEFAULT 0,
+  sent_at    TIMESTAMP NOT NULL DEFAULT now_utc(),
+  expires_at TIMESTAMP NOT NULL
+);
+
+-- ── Вход через соцсети ──
+-- Связь аккаунта площадки с профилем ВКонтакте или Mail.ru.
+CREATE TABLE IF NOT EXISTS social_accounts (
+  provider    TEXT      NOT NULL CHECK (provider IN ('vk', 'mailru')),
+  external_id TEXT      NOT NULL,
+  user_id     INTEGER   NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  email       TEXT,
+  created_at  TIMESTAMP NOT NULL DEFAULT now_utc(),
+  PRIMARY KEY (provider, external_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_social_user ON social_accounts(user_id);
+
 -- ── Витрина продавца ──
 -- Оформление магазина на тарифах «Витрина» и «Издание». Строка появляется,
 -- когда продавец впервые открывает настройку витрины.
@@ -322,3 +349,4 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS plan TEXT NOT NULL DEFAULT 'shelf';
 ALTER TABLE users ADD COLUMN IF NOT EXISTS plan_until TIMESTAMP;
 CREATE INDEX IF NOT EXISTS idx_users_plan ON users(plan);
 ALTER TABLE users ADD COLUMN IF NOT EXISTS editor_id INTEGER REFERENCES users(id) ON DELETE SET NULL;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS phone_verified INTEGER NOT NULL DEFAULT 0;

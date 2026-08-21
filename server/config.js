@@ -27,6 +27,42 @@ export const config = {
   cookieName: "cloud_token",
   isProd: process.env.NODE_ENV === "production",
   rateLimitEnabled: process.env.RATE_LIMIT !== "off",
+  /**
+   * Отправка кодов подтверждения.
+   *
+   * `smsru` — настоящая отправка (нужен SMS_API_KEY), `log` — код пишется в
+   * журнал сервера (для разработки), `off` — подтверждение по СМС выключено,
+   * вход и регистрация работают только по паролю.
+   */
+  sms: {
+    provider: process.env.SMS_PROVIDER
+      || (process.env.NODE_ENV === "production" ? "off" : "log"),
+    apiKey: process.env.SMS_API_KEY || "",
+    sender: process.env.SMS_SENDER || "",
+    /** Сколько живёт код и как часто можно просить новый. */
+    ttlSeconds: parseInt(process.env.SMS_CODE_TTL || "300", 10),
+    resendSeconds: parseInt(process.env.SMS_RESEND || "60", 10),
+    maxAttempts: parseInt(process.env.SMS_ATTEMPTS || "5", 10),
+  },
+  /**
+   * Вход через соцсети. Кнопка появляется, только когда заполнены оба ключа
+   * приложения: без них обещать вход нечестно.
+   */
+  oauth: {
+    /** Адрес сайта — из него собирается redirect_uri для провайдера. */
+    publicUrl: (process.env.PUBLIC_URL || "").replace(/\/+$/, ""),
+    vk: {
+      clientId: process.env.OAUTH_VK_CLIENT_ID || "",
+      secret: process.env.OAUTH_VK_SECRET || "",
+      // Доступы запрашиваем те, что разрешены приложению: пустое значение —
+      // только базовый профиль.
+      scope: process.env.OAUTH_VK_SCOPE || "",
+    },
+    mailru: {
+      clientId: process.env.OAUTH_MAILRU_CLIENT_ID || "",
+      secret: process.env.OAUTH_MAILRU_SECRET || "",
+    },
+  },
   // Origins allowed to send credentialed requests when the API is not proxied.
   corsOrigins: (process.env.CORS_ORIGINS || "http://localhost:8443,http://localhost:5173")
     .split(",")

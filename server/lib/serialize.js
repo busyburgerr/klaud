@@ -73,6 +73,7 @@ export function privateUser(row) {
     phoneRaw: row.phone,
     email: row.email ?? null,
     emailVerified: !!row.email_verified,
+    phoneVerified: !!row.phone_verified,
     notify: {
       deals: !!row.notify_deals,
       journal: !!row.notify_journal,

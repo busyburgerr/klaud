@@ -1,8 +1,15 @@
 import { Router } from "express";
 import { all } from "../db/index.js";
 import { FAQ_CATEGORIES, SUPPORT } from "../db/help-content.js";
+import { TERMS } from "../db/legal-content.js";
 
 export const helpRouter = Router();
+export const legalRouter = Router();
+
+// GET /api/legal/terms — пользовательское соглашение
+legalRouter.get("/terms", async (_req, res) => {
+  res.json({ document: TERMS, support: SUPPORT });
+});
 
 // GET /api/help — всё содержимое страницы «Помощь» одним запросом
 helpRouter.get("/", async (_req, res) => {
